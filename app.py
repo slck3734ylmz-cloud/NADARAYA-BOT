@@ -12,7 +12,7 @@ st.set_page_config(page_title="DCA Live Hedging Dashboard", layout="wide")
 
 # ================= ENTEGRE EDİLMİŞ TELEGRAM AYARLARINIZ =================
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
-telegram_chat_id = "KyounKripto"
+telegram_chat_id = "@KyounKripto"
 # =========================================================================
 
 # Durum Değişkenleri (Streamlit session_state ile saklanır)
