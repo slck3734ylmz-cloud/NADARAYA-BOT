@@ -10,9 +10,10 @@ import matplotlib.dates as mdates
 # Streamlit sayfa yapılandırması
 st.set_page_config(page_title="DCA Live Hedging Dashboard", layout="wide")
 
-# Telegram Bilgileriniz Entegre Durumdadır
+# ================= ENTEGRE EDİLMİŞ TELEGRAM AYARLARINIZ =================
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "665969213"
+# =========================================================================
 
 # Durum Değişkenleri (Streamlit session_state ile saklanır)
 if 'balance_usd' not in st.session_state:
@@ -94,7 +95,8 @@ while True:
         df = pd.merge_asof(df.sort_values("Zaman"), df_30m[["Zaman", "NW_Ust_30m", "NW_Alt_30m"]].sort_values("Zaman"), on="Zaman", direction="backward")
 
         df_2h = df.resample("2h", on="Zaman").last().ffill().reset_index()
-        df_2h = calculate_nw_bands(df_2h, 1.8, "_2h")
+        # Kademe 3 (2h): Sıralama hatasını düzeltmek için standart sapma 1.8'den 2.5'e yükseltildi
+        df_2h = calculate_nw_bands(df_2h, 2.5, "_2h")
         df = pd.merge_asof(df.sort_values("Zaman"), df_2h[["Zaman", "NW_Ust_2h", "NW_Alt_2h"]].sort_values("Zaman"), on="Zaman", direction="backward")
 
         latest_row = df.iloc[-1]
