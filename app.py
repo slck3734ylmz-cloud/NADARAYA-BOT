@@ -1,6 +1,6 @@
+import streamlit as st
 import ccxt
 import pandas as pd
-import pandas_ta as ta
 import numpy as np
 import time
 import requests
@@ -73,17 +73,17 @@ exchange = ccxt.kraken()
 # Canlı Taramayı Başlat
 while True:
     try:
-        # 1. Trend Hesaplama (4H)
+        # 1. Trend Hesaplama (4H) - Yerel Pandas Metodu
         raw_4h = exchange.fetch_ohlcv('BTC/USD', "4h", limit=210)
         df_4h = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-        df_4h["EMA_200"] = df_4h["Kapanis"].rolling(200).mean()
+        df_4h["EMA_200"] = df_4h["Kapanis"].ewm(span=200, adjust=False).mean()
         
         latest_4h_close = df_4h.iloc[-1]["Kapanis"]
         latest_4h_ema = df_4h.iloc[-1]["EMA_200"]
         trend_4h = "YUKARI (BOĞA)" if latest_4h_close > latest_4h_ema else "AŞAĞI (AYI)"
         warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
 
-        # 2. Canlı 15m/30m/2h Verilerini Al (Limit 600 yapılarak nan hatası giderildi)
+        # 2. Canlı 15m/30m/2h Verilerini Al (Limit 600)
         raw_candles = exchange.fetch_ohlcv('BTC/USD', "15m", limit=600)
         df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
@@ -251,7 +251,6 @@ while True:
             # --- LONG GRID KARTI ---
             with col_l:
                 st.info("📈 LONG (Boğa) KADEMELERİ")
-                # Kademelerin adet bilgileri eklendi (0.0001, 0.0002, 0.0012)
                 k1_status = f"✅ Alındı ({st.session_state.l_avg_price:.2f} USD)" if st.session_state.l_status[0] else f"⏳ Bekliyor ({nw_alt_15m:.2f} | {layer_sizes[0]} BTC)"
                 k2_status = f"✅ Alındı" if st.session_state.l_status[1] else f"⏳ Bekliyor ({nw_alt_30m:.2f} | {layer_sizes[1]} BTC)"
                 k3_status = f"✅ Alındı" if st.session_state.l_status[2] else f"⏳ Bekliyor ({nw_alt_2h:.2f} | {layer_sizes[2]} BTC)"
@@ -272,7 +271,6 @@ while True:
             # --- SHORT GRID KARTI ---
             with col_s:
                 st.error("📉 SHORT (Ayı) KADEMELERİ")
-                # Kademelerin adet bilgileri eklendi (0.0001, 0.0002, 0.0012)
                 s_k1_status = f"✅ Açıldı ({st.session_state.s_avg_price:.2f} USD)" if st.session_state.s_status[0] else f"⏳ Bekliyor ({nw_ust_15m:.2f} | {layer_sizes[0]} BTC)"
                 s_k2_status = f"✅ Açıldı" if st.session_state.s_status[1] else f"⏳ Bekliyor ({nw_ust_30m:.2f} | {layer_sizes[1]} BTC)"
                 s_k3_status = f"✅ Açıldı" if st.session_state.s_status[2] else f"⏳ Bekliyor ({nw_ust_2h:.2f} | {layer_sizes[2]} BTC)"
