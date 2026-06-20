@@ -84,7 +84,7 @@ while True:
         warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
 
         # 2. Canlı 15m/30m/2h Verilerini Al
-        raw_candles = exchange.fetch_ohlcv('BTC/USD', "15m", limit=100)
+        raw_candles = exchange.fetch_ohlcv('BTC/USD', "15m", limit=600)
         df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
         df = calculate_nw_bands(df, 2.0, "_15m")
