@@ -46,6 +46,16 @@ def send_telegram_msg(message):
     except:
         pass
 
+# ================= STREAMLIT YAN PANEL (SIDEBAR) TASARIMI =================
+st.sidebar.title("💳 Cüzdan Durumu")
+st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
+
+# TELEGRAM BAĞLANTI TESTİ BUTONU (YENİ EKLEME)
+if st.sidebar.button("🔔 Telegram Bağlantısını Test Et"):
+    send_telegram_msg("👋 *Bağlantı Testi:* Web siteniz üzerinden gönderilen test mesajı başarılı! Siteniz ve Telegram botunuz sorunsuz haberleşiyor.")
+    st.sidebar.success("Test mesajı gönderildi! Telefonunuzu kontrol edin.")
+# =========================================================================
+
 def nadaraya_watson_estimator(src, h=8):
     n = len(src)
     estimates = np.zeros(n)
@@ -240,9 +250,9 @@ while True:
             col_t1, col_t2 = st.columns(2)
             col_t1.metric(label="4 Saatlik Genel Trend Yönü", value=trend_4h)
             if trend_4h == "YUKARI (BOĞA)":
-                col_t2.success(f"🛡️ Emniyet Uyarısı: {warning_msg}")
+                st.success(f"🛡️ Emniyet Uyarısı: {warning_msg}")
             else:
-                col_t2.error(f"🛡️ Emniyet Uyarısı: {warning_msg}")
+                st.error(f"🛡️ Emniyet Uyarısı: {warning_msg}")
 
         # Dinamik Kademe ve Hedef Kartı (DCA Sinyal Kartı)
         with dca_cards_placeholder.container():
