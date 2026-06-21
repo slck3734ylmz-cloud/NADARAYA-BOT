@@ -8,6 +8,31 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from supabase import create_client, Client
 
+# ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
+def check_password():
+    """Doğru şifre girilmeden hiçbir veritabanı veya borsa verisi yüklenmez."""
+    if "password_correct" not in st.session_state:
+        st.session_state.password_correct = False
+    
+    if st.session_state.password_correct:
+        return True
+        
+    st.markdown("<h2 style='text-align: center; color: white; margin-top: 50px;'>🔒 DCA Terminal Güvenlik Girişi</h2>", unsafe_allow_html=True)
+    col_login, _ = st.columns([1, 1.5])
+    with col_login:
+        user_password = st.text_input("Lütfen şahsi siber güvenlik şifrenizi girin:", type="password")
+        if st.button("Giriş Yap"):
+            if user_password == "dca2026": 
+                st.session_state.password_correct = True
+                st.rerun()
+            else:
+                st.error("❌ Hatalı Şifre! Erişim reddedildi.")
+    return False
+
+if not check_password():
+    st.stop()  # Şifre yanlışsa kodun geri kalanının çalışmasını durdurur
+# =========================================================================
+
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
@@ -131,7 +156,7 @@ def get_market_movers_and_funding():
                     base_vol = ticker.get('baseVolume') or 0.0
                     volume = base_vol * price
                 
-                # 2. Fonlama Oranı Verisi
+                # 2. Fonlama Oranı Verisi (Hata düzeltildi, tüm gereksiz kod kalıntıları silindi)
                 raw_info = ticker.get('info', {})
                 funding_val = raw_info.get('funding_rate')
                 fr_val = float(funding_val) * 100.0 if funding_val is not None else 0.0
@@ -176,7 +201,7 @@ def get_market_movers_and_funding():
     except Exception as e:
         return [], pd.DataFrame(), pd.DataFrame()
 
-# ================= 3 GÜNLÜK SANAL LİKİDASYON HARİTASI HESAPLAMA (GELİŞTİRİLDİ) =================
+# ================= 3 GÜNLÜK SANAL LİKİDASYON HARİTASI HESAPLAMA =================
 @st.cache_data(ttl=300)
 def estimate_liquidation_pools(symbol):
     try:
@@ -208,16 +233,11 @@ def estimate_liquidation_pools(symbol):
                 bin_p = round(liq_p / round_step) * round_step
                 short_liq_bins[bin_p] = short_liq_bins.get(bin_p, 0.0) + vol
                 
-        # En yoğun 3 bölgeyi seçiyoruz
         sorted_long = sorted(long_liq_bins.items(), key=lambda x: x[1], reverse=True)[:3]
         sorted_short = sorted(short_liq_bins.items(), key=lambda x: x[1], reverse=True)[:3]
         
-        # ================= GÖSTERİM VE SIRALAMA OPTİMİZASYONU =================
-        # LONG Likidasyonları (Destekler): Anlık fiyata en yakın (en yüksek) olan en üstte olmalıdır (Descending)
         sorted_long.sort(key=lambda x: x[0], reverse=True)
-        # SHORT Likidasyonları (Dirençler): Anlık fiyata en yakın (en düşük) olan en üstte olmalıdır (Ascending)
         sorted_short.sort(key=lambda x: x[0], reverse=False)
-        # ======================================================================
         
         long_pools = []
         for p, v in sorted_long:
@@ -232,7 +252,6 @@ def estimate_liquidation_pools(symbol):
         return pd.DataFrame(long_pools), pd.DataFrame(short_pools)
     except:
         return pd.DataFrame(), pd.DataFrame()
-# =============================================================================================
 
 # Veritabanını yormamak için toplu borsa analizi tek seferde çekilir
 extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
@@ -372,59 +391,90 @@ main_container = st.empty()
 # Canlı Taramayı Başlat
 while True:
     try:
-        # 1. Seçilen Vadeli Coin İçin Trend Hesaplama (4H)
-        raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=210)
-        df_4h = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-        df_4h["EMA_200"] = df_4h["Kapanis"].ewm(span=200, adjust=False).mean()
+        # 1. ANLIK VOLATİLİTE ÖLÇÜMÜ (Tansiyon Algoritması - SAKİN / VOLATİL)
+        # 15 dakikalık son 120 veriyi çekip oynaklığı tarihsel medyanla kıyaslıyoruz
+        raw_vol = exchange.fetch_ohlcv(selected_symbol, "15m", limit=120)
+        df_vol = pd.DataFrame(raw_vol, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_vol["std"] = df_vol["Kapanis"].rolling(20).std()
         
-        latest_4h_close = df_4h.iloc[-1]["Kapanis"]
-        latest_4h_ema = df_4h.iloc[-1]["EMA_200"]
-        trend_4h = "YUKARI (BOĞA)" if latest_4h_close > latest_4h_ema else "AŞAĞI (AYI)"
-        warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
-
-        # 2. Canlı 5m/1h/4h Verilerini Al (Limit 1000)
-        raw_candles = exchange.fetch_ohlcv(selected_symbol, "5m", limit=1000)
-        df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-        df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
+        current_std = df_vol.iloc[-1]["std"]
+        historical_median_std = df_vol["std"].median()
         
-        # 5m NW ve RSI (Sapma: 3.0)
-        df = calculate_nw_bands(df, 3.0, "_5m")
-        delta = df["Kapanis"].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rs = gain / loss
-        df["RSI_14"] = 100 - (100 / (1 + rs))
+        # Piyasa Durumu Kararı
+        is_volatile = current_std > historical_median_std
+        market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
-        # 1h resample ve NW hesaplama (Sapma: 3.0)
-        df_1h = df.resample("60min", on="Zaman").last().ffill().reset_index()
-        df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
-        diff_1h = df_1h["Kapanis"].diff()
-        up_1h = diff_1h.clip(lower=0)
-        down_1h = -diff_1h.clip(upper=0)
-        ma_up_1h = up_1h.rolling(14).mean()
-        ma_down_1h = down_1h.rolling(14).mean()
-        rs_1h = ma_up_1h / ma_down_1h
-        df_1h["RSI_14_1h"] = 100 - (100 / (1 + rs_1h))
-        df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h", "RSI_14_1h"]].sort_values("Zaman"), on="Zaman", direction="backward")
+        # 2. SEÇİLEN KODA GÖRE CANLI VERİLERİ VE RESAMPLE DİLİMLERİNİ HESAPLA
+        if not is_volatile:
+            # SAKİN PİYASA (Sistem A: 1m / 5m / 15m) -> 1m master veri çekilir
+            raw_candles = exchange.fetch_ohlcv(selected_symbol, "1m", limit=1000)
+            df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
+            
+            # K1 (1m), K2 (5m), K3 (15m) NW Hesaplamaları (Birebir 3.0 Std)
+            df = calculate_nw_bands(df, 3.0, "_5m") # 1m master olduğu için sütun adları uyumluluğu
+            df_1h = df.resample("5min", on="Zaman").last().ffill().reset_index()
+            df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
+            df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h"]].sort_values("Zaman"), on="Zaman", direction="backward")
+            
+            df_4h_res = df.resample("15min", on="Zaman").last().ffill().reset_index()
+            df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
+            df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h"]].sort_values("Zaman"), on="Zaman", direction="backward")
+            
+            # 1d yedek hesaplama
+            raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=100)
+            df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
+            df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
+            
+            # Dinamik Kriter İsimleri
+            l1_lbl, l2_lbl, l3_lbl = "Kademe 1 (1m)", "Kademe 2 (5m)", "Kademe 3 (15m)"
+            s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (1m)", "Kademe 2 (5m)", "Kademe 3 (15m)"
+            active_engine_name = "⏱️ SİSTEM A: ULTRA HIZLI SCALP (1m/5m/15m)"
+        else:
+            # VOLATİL PİYASA (Sistem B: 5m / 1h / 4h) -> 5m master veri çekilir
+            raw_candles = exchange.fetch_ohlcv(selected_symbol, "5m", limit=1000)
+            df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
+            
+            # K1 (5m), K2 (1h), K3 (4h) NW ve RSI Hesaplamaları
+            df = calculate_nw_bands(df, 3.0, "_5m")
+            delta = df["Kapanis"].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            rs = gain / loss
+            df["RSI_14"] = 100 - (100 / (1 + rs))
 
-        # 4h resample ve NW hesaplama (Sapma: 3.0)
-        df_4h_res = df.resample("240min", on="Zaman").last().ffill().reset_index()
-        df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
-        diff_4h = df_4h_res["Kapanis"].diff()
-        up_4h = diff_4h.clip(lower=0)
-        # BUG FIX: down_4h limit süzgeci eklendi
-        down_4h = -diff_4h.clip(upper=0)
-        ma_up_4h = up_4h.rolling(14).mean()
-        ma_down_4h = down_4h.rolling(14).mean()
-        rs_4h = ma_up_4h / ma_down_4h
-        df_4h_res["RSI_14_4h"] = 100 - (100 / (1 + rs_4h))
-        df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h", "RSI_14_4h"]].sort_values("Zaman"), on="Zaman", direction="backward")
+            df_1h = df.resample("60min", on="Zaman").last().ffill().reset_index()
+            df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
+            diff_1h = df_1h["Kapanis"].diff()
+            up_1h = diff_1h.clip(lower=0)
+            down_1h = -diff_1h.clip(upper=0)
+            ma_up_1h = up_1h.rolling(14).mean()
+            ma_down_1h = down_1h.rolling(14).mean()
+            rs_1h = ma_up_1h / ma_down_1h
+            df_1h["RSI_14_1h"] = 100 - (100 / (1 + rs_1h))
+            df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h", "RSI_14_1h"]].sort_values("Zaman"), on="Zaman", direction="backward")
 
-        # 1 günlük (1d) grafik için veri çekme
-        raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=100)
-        df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-        df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
-        df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
+            df_4h_res = df.resample("240min", on="Zaman").last().ffill().reset_index()
+            df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
+            diff_4h = df_4h_res["Kapanis"].diff()
+            up_4h = diff_4h.clip(lower=0)
+            down_4h = -diff_4h.clip(upper=0)  # BUG FIX: down_4h limit süzgeci düzeltildi
+            ma_up_4h = up_4h.rolling(14).mean()
+            ma_down_4h = down_4h.rolling(14).mean()
+            rs_4h = ma_up_4h / ma_down_4h
+            df_4h_res["RSI_14_4h"] = 100 - (100 / (1 + rs_4h))
+            df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h", "RSI_14_4h"]].sort_values("Zaman"), on="Zaman", direction="backward")
+
+            raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=100)
+            df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
+            df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
+
+            l1_lbl, l2_lbl, l3_lbl = "Kademe 1 (5m)", "Kademe 2 (1h)", "Kademe 3 (4h)"
+            s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (5m)", "Kademe 2 (1h)", "Kademe 3 (4h)"
+            active_engine_name = "🌎 SİSTEM B: MAKRO TREND (5m/1h/4h)"
 
         # Seçilen Coin için 3 Günlük Likidasyon Havuzlarını Tahmin Et
         df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
@@ -438,14 +488,14 @@ while True:
         nw_ust_1h = latest_row["NW_Ust_1h"]
         nw_ust_4h = latest_row["NW_Ust_4h"]
         
-        rsi_5m = latest_row["RSI_14"]
+        rsi_5m = latest_row["RSI_14"] if "RSI_14" in latest_row else 50.0
         rsi_1h = latest_row["RSI_14_1h"] if "RSI_14_1h" in latest_row else 50.0
         rsi_4h = latest_row["RSI_14_4h"] if "RSI_14_4h" in latest_row else 50.0
 
         # Canlı Iraksama Analizini Yapıyoruz
-        bull_div_5m, bear_div_5m = detect_rsi_divergence(df["Kapanis"].values, df["RSI_14"].values)
-        bull_div_1h, bear_div_1h = detect_rsi_divergence(df_1h["Kapanis"].values, df_1h["RSI_14_1h"].values)
-        bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h_res["Kapanis"].values, df_4h_res["RSI_14_4h"].values)
+        bull_div_5m, bear_div_5m = detect_rsi_divergence(df["Kapanis"].values, df["RSI_14"].values) if "RSI_14" in df else (False, False)
+        bull_div_1h, bear_div_1h = detect_rsi_divergence(df_1h["Kapanis"].values, df_1h["RSI_14_1h"].values) if "RSI_14_1h" in df_1h else (False, False)
+        bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h_res["Kapanis"].values, df_4h_res["RSI_14_4h"].values) if "RSI_14_4h" in df_4h_res else (False, False)
 
         # =================== LONG POZİSYON ÇIKIŞLARI ===================
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
@@ -456,7 +506,7 @@ while True:
                 l_stop = nw_alt_4h * (1 - stop_loss_ratio)
                 if current_price <= l_stop:
                     st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                    msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f} (Son Alımın %1 Altı)"
+                    msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
                     send_telegram_msg(msg)
                     st.session_state[f"{state_prefix}log_history"].append(msg)
                     st.session_state[f"{state_prefix}l_crypto"] = 0.0
@@ -484,7 +534,7 @@ while True:
             if st.session_state[f"{state_prefix}s_status"][2] and current_price >= s_stop:
                 pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
-                msg = f"🔴 *SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f} (Son Alımın %1 Üstü)"
+                msg = f"🔴 *SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}s_crypto"] = 0.0
@@ -661,7 +711,7 @@ while True:
                     st.pyplot(fig4)
                     plt.close(fig4)
 
-                # --- LİKİDASYON HARİTASI (SOL SÜTUNA ALINDI - SIFIR KAYDIRMA) ---
+                # --- LİKİDASYON HARİTASI (SOL SÜTUNDA - SIFIR KAYDIRMA) ---
                 st.markdown("---")
                 st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
                 st.write("Fiyat hareketleri ve hacim birikimlerine göre kaldıraçlı pozisyonların (25x, 50x, 100x) tahmini likidasyon seviyeleri.")
@@ -683,8 +733,9 @@ while True:
 
             # --- SAĞ SÜTUN (KONTROL MASASI VE GÖSTERGELER) ---
             with col_right:
+                # 1. Başlık ve Aktif Sistem Adı
                 st.subheader(f"📊 {selected_symbol.split(':')[0]} Canlı Terminal")
-                st.write(f"Anlık Vadeli Fiyat: **{current_price:.2f} USDT**")
+                st.write(f"Aktif Motor: **{active_engine_name}**")
                 
                 # Trend Kartı
                 st.markdown("---")
@@ -695,9 +746,9 @@ while True:
                 else:
                     col_t2.error(f"🛡️ Emniyet: {warning_msg}")
                 
-                # RSI & Iraksama Kartı
+                # RSI & Iraksama Kartı (HACİM/ZAMAN DİLİMLERİ İÇİN IRAKSAMALAR GÖRSELLEŞTİRİLDİ)
                 st.markdown("---")
-                st.write("⚡ **RSI & Momentum Süzgeci**")
+                st.write("⚡ **RSI & Momentum Sinyal Güç Süzgeci**")
                 col_r1, col_r2, col_r3 = st.columns(3)
                 
                 with col_r1:
@@ -743,13 +794,13 @@ while True:
                     k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f} USDT)" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_5m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
                     k2_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][1] else f"⏳ Bekliyor ({nw_alt_1h:.2f} | {layer_sizes[1]:.4f} {selected_symbol.split('/')[0]})"
                     k3_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_4h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
-                    st.write(f"**K1 (5m):** {k1_status}")
-                    st.write(f"**K2 (1h):** {k2_status}")
-                    st.write(f"**K3 (4h):** {k3_status}")
+                    st.write(f"**{l1_lbl}:** {k1_status}")
+                    st.write(f"**{l2_lbl}:** {k2_status}")
+                    st.write(f"**{l3_lbl}:** {k3_status}")
                     if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                         l_tp = st.session_state[f"{state_prefix}l_avg_price"] * 1.01
-                        l_sl = nw_alt_4h * 0.99
-                        st.markdown(f"**Maliyet Ort :** `{st.session_state[f'{state_prefix}l_avg_price']:.2f} USDT`")
+                        l_sl = nw_alt_4h * 0.99 if st.session_state[f"{state_prefix}l_status"][2] else "PASİF (3. Kademeden Sonra)"
+                        st.write(f"**Ort. Giriş:** {st.session_state[f'{state_prefix}l_avg_price']:.2f}")
                         st.success(f"🟢 **KAR-AL (%1):** `{l_tp:.2f} USDT` (Sinyal gelince karla satın!)")
                         if st.session_state[f"{state_prefix}l_status"][2]:
                             st.error(f"🚨 **ACİL STOP (%2):** `{l_sl:.2f} USDT` (Son Alımın %1 Altı!)")
@@ -761,13 +812,13 @@ while True:
                     s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_avg_price']:.2f} USDT)" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_5m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
                     s_k2_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][1] else f"⏳ Bekliyor ({nw_ust_1h:.2f} | {layer_sizes[1]:.4f} {selected_symbol.split('/')[0]})"
                     s_k3_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_4h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
-                    st.write(f"**K1 (5m):** {s_k1_status}")
-                    st.write(f"**K2 (1h):** {s_k2_status}")
-                    st.write(f"**K3 (4h):** {s_k3_status}")
+                    st.write(f"**{s1_lbl}:** {s_k1_status}")
+                    st.write(f"**{s2_lbl}:** {s_k2_status}")
+                    st.write(f"**{s3_lbl}:** {s_k3_status}")
                     if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                         s_tp = st.session_state[f"{state_prefix}s_avg_price"] * 0.99
-                        s_sl = nw_ust_4h * 1.02
-                        st.markdown(f"**Maliyet Ort :** `{st.session_state[f'{state_prefix}s_avg_price']:.2f} USDT`")
+                        s_sl = nw_ust_4h * 1.02 if st.session_state[f"{state_prefix}s_status"][2] else "PASİF (3. Kademeden Sonra)"
+                        st.write(f"**Ort. Giriş:** {st.session_state[f'{state_prefix}s_avg_price']:.2f}")
                         st.success(f"🟢 **KAR-AL (%1):** `{s_tp:.2f} USDT` (Sinyal gelince karla kapatın!)")
                         if st.session_state[f"{state_prefix}s_status"][2]:
                             st.error(f"🚨 **ACİL STOP (%2):** `{s_sl:.2f} USDT` (Son Alımın %1 Üstü!)")
