@@ -389,4 +389,4 @@ while True:
     except Exception as e:
         st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
         
-    time.sleep(30)
+    time.sleep(10)
