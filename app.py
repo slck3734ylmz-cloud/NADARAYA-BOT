@@ -6,28 +6,31 @@ import time
 import requests
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from supabase import create_client, Client  # Veritabanı bağlantı kütüphanesi
 
 # Streamlit sayfa yapılandırması
 st.set_page_config(page_title="DCA Live Hedging Dashboard", layout="wide")
 
-# ================= ENTEGRE EDİLMİŞ TELEGRAM AYARLARINIZ =================
+# ================= ENTEGRE EDİLMİŞ TELEGRAM VE VERİTABANI AYARLARINIZ =================
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "665969213"
-# =========================================================================
 
-# GATE.IO FUTURES BAĞLANTISI (Kraken ve Binance engelsiz, en kararlı bağlantı)
+supabase_url = "https://ahnwbxfghccotwnlhzgl.supabase.co"
+supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFobndieGZnaGNjb3R3bmxoemdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwMTI3NzcsImV4cCI6MjA5NzU4ODc3N30.9cR5NBti19ddH7UivdcikYFoCRwk42mIkOkElYqT2Oc"
+
+# Bulut veritabanı istemcisini başlatıyoruz
+supabase: Client = create_client(supabase_url, supabase_key)
+# ======================================================================================
+
 exchange = ccxt.gate()
 
-# ================= GÖMÜLÜ CANLI FİYAT VE YÜZDELİKLİ TARAYICI =================
-@st.cache_data(ttl=300)  # Sitenin kasmaması için listeyi 5 dakikada bir günceller
+@st.cache_data(ttl=300)
 def get_top_50_volume_coins():
     try:
         tickers = exchange.fetch_tickers()
         usd_tickers = []
         for symbol, ticker in tickers.items():
-            # Gate.io sürekli vadeli kontratları ':USDT' ile biter
             if symbol.endswith(':USDT'):
-                # Boş veri kontrolü (None-guard)
                 quote_vol = ticker.get('quoteVolume')
                 if quote_vol is None:
                     base_vol = ticker.get('baseVolume') or 0.0
@@ -48,41 +51,56 @@ def get_top_50_volume_coins():
                 {'symbol': "ETH/USDT:USDT", 'display': "ETH/USDT ($3,500.00 | +0.00%)"}
             ]
             
-        # Hacme göre sırala
         usd_tickers.sort(key=lambda x: x['volume'], reverse=True)
-        
         top_50_data = []
         for item in usd_tickers[:50]:
-            clean_sym = item['symbol'].split(":")[0]  # BTC/USDT formatı
+            clean_sym = item['symbol'].split(":")[0]
             display_name = f"{clean_sym} (${item['price']:,.2f} | {item['change']:+.2f}%)"
             top_50_data.append({
                 'symbol': item['symbol'],
                 'display': display_name
             })
         return top_50_data
-    except Exception as e:
+    except:
         return [
             {'symbol': "BTC/USDT:USDT", 'display': "BTC/USDT ($64,222.00 | +0.00%)"},
             {'symbol': "ETH/USDT:USDT", 'display': "ETH/USDT ($3,500.00 | +0.00%)"}
         ]
-# ==========================================================================================
 
-# Canlı Fiyatlı ve Yüzdelikli 50 coini çekiyoruz
+# En yüksek hacimli 50 vadeli coini çekiyoruz
 top_50_data = get_top_50_volume_coins()
 display_options = [item['display'] for item in top_50_data]
 
-# Streamlit Yan Panel (Sidebar) Tasarımı
+# Sidebar Tasarımı
 st.sidebar.title("💳 Cüzdan Durumu")
 st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
 
-# COİN SEÇİM KUTUSU (Artık içinde fiyatlar ve % değişimler yazıyor!)
 selected_display = st.sidebar.selectbox("🔥 Vadeli Coin Seçin (Hacim Sıralı 50)", display_options)
-
-# Seçilen görsel ismi sistemdeki gerçek borsa sembolüne eşliyoruz
 selected_symbol = [item['symbol'] for item in top_50_data if item['display'] == selected_display][0]
 
-# Seçilen coinin durum değişkenleri (Her coin için bağımsız session_state saklanır)
+# ================= VERİTABANINDAN DURUMU GERİ YÜKLEME (RESTORE) =================
 state_prefix = f"{selected_symbol}_"
+
+# Sayfa her yüklendiğinde önce bulut veritabanında bu coine ait eski bir kayıt var mı diye bakar
+try:
+    db_query = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).execute()
+    if db_query.data:
+        # Eğer geçmiş kayıt varsa, cüzdan durumunu doğrudan buluttan geri yükler
+        db_data = db_query.data[0]
+        st.session_state[f"{state_prefix}balance_usd"] = db_data["balance_usd"]
+        st.session_state[f"{state_prefix}l_status"] = [db_data["l_status_0"], db_data["l_status_1"], db_data["l_status_2"]]
+        st.session_state[f"{state_prefix}l_crypto"] = db_data["l_crypto"]
+        st.session_state[f"{state_prefix}l_usd_spent"] = db_data["l_usd_spent"]
+        st.session_state[f"{state_prefix}l_avg_price"] = db_data["l_avg_price"]
+        st.session_state[f"{state_prefix}s_status"] = [db_data["s_status_0"], db_data["s_status_1"], db_data["s_status_2"]]
+        st.session_state[f"{state_prefix}s_crypto"] = db_data["s_crypto"]
+        st.session_state[f"{state_prefix}s_usd_spent"] = db_data["s_usd_spent"]
+        st.session_state[f"{state_prefix}s_avg_price"] = db_data["s_avg_price"]
+        st.session_state[f"{state_prefix}log_history"] = db_data["log_history"] or []
+except:
+    pass
+
+# Eğer bulutta kayıt yoksa varsayılan başlangıç değerlerini atar
 if f"{state_prefix}balance_usd" not in st.session_state:
     st.session_state[f"{state_prefix}balance_usd"] = 100.0
     st.session_state[f"{state_prefix}initial_balance"] = 100.0
@@ -96,7 +114,32 @@ if f"{state_prefix}balance_usd" not in st.session_state:
     st.session_state[f"{state_prefix}s_avg_price"] = 0.0
     st.session_state[f"{state_prefix}log_history"] = []
 
-# Seçilen coinin fiyatına göre kademe adetlerini dinamik ölçeklendiriyoruz (Ultra-Güvenli)
+def save_state_to_db():
+    """Her işlem sonrasında güncel bakiye ve pozisyon durumunu bulut veritabanına kaydeder (Upsert)."""
+    try:
+        data = {
+            "coin_symbol": selected_symbol,
+            "balance_usd": st.session_state[f"{state_prefix}balance_usd"],
+            "l_status_0": st.session_state[f"{state_prefix}l_status"][0],
+            "l_status_1": st.session_state[f"{state_prefix}l_status"][1],
+            "l_status_2": st.session_state[f"{state_prefix}l_status"][2],
+            "l_crypto": st.session_state[f"{state_prefix}l_crypto"],
+            "l_usd_spent": st.session_state[f"{state_prefix}l_usd_spent"],
+            "l_avg_price": st.session_state[f"{state_prefix}l_avg_price"],
+            "s_status_0": st.session_state[f"{state_prefix}s_status"][0],
+            "s_status_1": st.session_state[f"{state_prefix}s_status"][1],
+            "s_status_2": st.session_state[f"{state_prefix}s_status"][2],
+            "s_crypto": st.session_state[f"{state_prefix}s_crypto"],
+            "s_usd_spent": st.session_state[f"{state_prefix}s_usd_spent"],
+            "s_avg_price": st.session_state[f"{state_prefix}s_avg_price"],
+            "log_history": st.session_state[f"{state_prefix}log_history"]
+        }
+        supabase.table("bot_state").upsert(data).execute()
+    except Exception as e:
+        st.sidebar.error(f"Veritabanı kaydı başarısız: {e}")
+
+# ===============================================================================
+
 try:
     ticker_info = exchange.fetch_ticker(selected_symbol)
     coin_price = ticker_info.get('last') or ticker_info.get('close') or 63000.0
@@ -194,6 +237,7 @@ while True:
                 st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
                 st.session_state[f"{state_prefix}l_avg_price"] = 0.0
                 st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                save_state_to_db()  # Veritabanına kaydet
 
             elif current_price >= l_tp:
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
@@ -204,6 +248,7 @@ while True:
                 st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
                 st.session_state[f"{state_prefix}l_avg_price"] = 0.0
                 st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                save_state_to_db()  # Veritabanına kaydet
 
         # =================== SHORT POZİSYON ÇIKIŞLARI ===================
         if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
@@ -220,6 +265,7 @@ while True:
                 st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
                 st.session_state[f"{state_prefix}s_avg_price"] = 0.0
                 st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                save_state_to_db()  # Veritabanına kaydet
 
             elif current_price <= s_tp:
                 pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
@@ -231,6 +277,7 @@ while True:
                 st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
                 st.session_state[f"{state_prefix}s_avg_price"] = 0.0
                 st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                save_state_to_db()  # Veritabanına kaydet
 
         # =================== LONG GİRİŞLERİ ===================
         if current_price <= nw_alt_15m and not st.session_state[f"{state_prefix}l_status"][0]:
@@ -243,6 +290,7 @@ while True:
             msg = f"📈 *LONG K1 SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
+            save_state_to_db()  # Veritabanına kaydet
 
         if current_price <= nw_alt_30m and not st.session_state[f"{state_prefix}l_status"][1]:
             buy_amt = layer_sizes[1]
@@ -254,6 +302,7 @@ while True:
             msg = f"📈 *LONG K2 SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
+            save_state_to_db()  # Veritabanına kaydet
 
         if current_price <= nw_alt_2h and not st.session_state[f"{state_prefix}l_status"][2]:
             buy_amt = layer_sizes[2]
@@ -265,6 +314,7 @@ while True:
             msg = f"📈 *LONG K3 SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
+            save_state_to_db()  # Veritabanına kaydet
 
         # =================== SHORT GİRİŞLERİ ===================
         if current_price >= nw_ust_15m and not st.session_state[f"{state_prefix}s_status"][0]:
@@ -277,6 +327,7 @@ while True:
             msg = f"📉 *SHORT K1 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
+            save_state_to_db()  # Veritabanına kaydet
 
         if current_price >= nw_ust_30m and not st.session_state[f"{state_prefix}s_status"][1]:
             sell_amt = layer_sizes[1]
@@ -288,6 +339,7 @@ while True:
             msg = f"📉 *SHORT K2 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
+            save_state_to_db()  # Veritabanına kaydet
 
         if current_price >= nw_ust_2h and not st.session_state[f"{state_prefix}s_status"][2]:
             sell_amt = layer_sizes[2]
@@ -299,6 +351,7 @@ while True:
             msg = f"📉 *SHORT K3 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
+            save_state_to_db()  # Veritabanına kaydet
 
         # =================== EKRAN GÜNCELLEMELERİ (WEB UI) ===================
         with title_placeholder.container():
@@ -389,4 +442,4 @@ while True:
     except Exception as e:
         st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
         
-    time.sleep(10)
+    time.sleep(30)
