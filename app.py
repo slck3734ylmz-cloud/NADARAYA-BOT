@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 import time
 import requests
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import plotly.graph_objects as go
 from supabase import create_client, Client
 
@@ -34,6 +36,9 @@ if not check_password():
 
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
+
+# Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz (Backtest için gerekli)
+plt.style.use('dark_background')
 
 # ================= FLICKER-FREE (KIPIRDAMASIZ) CSS ENJEKSİYONU =================
 st.markdown(
@@ -577,6 +582,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
 
     main_container = st.empty()
 
+    # Orijinal kıpırdamasız ve kararmasız while True döngüsü geri yüklendi (st.rerun silindi)
     while True:
         try:
             # 1. ANLIK BORSA TICKER VERİSİ SORGULAMA
@@ -764,7 +770,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.subheader("📈 Canlı Fiyat ve Nadaraya-Watson Zarf Grafikleri")
                     tab_1m, tab_5m, tab_15m, tab_1h, tab_4h, tab_1d = st.tabs(["⏱️ 1m", "⏱️ 5m", "⏱️ 15m", "⏱️ 1h", "⏱️ 4h", "🌎 1d"])
                     
-                    # HATA GİDERİCİ: Tüm st.plotly_chart() grafiklerinin key parametreleri kaldırıldı. Yerinde güncelleme çakışması kesin olarak çözüldü.
                     with tab_1m:
                         df_subset = df_1m.tail(100)
                         st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
