@@ -379,28 +379,30 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
             # =================== 4. NATIVE VERİ SORGULAMALARI (120 MUM TAMPONLU) ===================
-            raw_5m = exchange.fetch_ohlcv(selected_symbol, "5m", limit=120)
-            df_5m = pd.DataFrame(raw_5m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-            df_5m["Zaman"] = pd.to_datetime(df_5m["Zaman"], unit="ms")
-            df_5m["RSI"] = calculate_rsi(df_5m["Kapanis"])
-
-            raw_1h = exchange.fetch_ohlcv(selected_symbol, "1h", limit=120)
-            df_1h = pd.DataFrame(raw_1h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-            df_1h["Zaman"] = pd.to_datetime(df_1h["Zaman"], unit="ms")
-            df_1h["RSI"] = calculate_rsi(df_1h["Kapanis"])
-
-            # Diğer yardımcı gösterim verileri
+            # Grafik sekmelerinin hata vermemesi için standart 3.0 sapma bantları her dataframe'e işlenir.
             raw_1m = exchange.fetch_ohlcv(selected_symbol, "1m", limit=120)
             df_1m = pd.DataFrame(raw_1m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
             df_1m["Zaman"] = pd.to_datetime(df_1m["Zaman"], unit="ms")
             df_1m = calculate_nw_bands(df_1m, 3.0, "_1m")
             df_1m["RSI"] = calculate_rsi(df_1m["Kapanis"])
 
+            raw_5m = exchange.fetch_ohlcv(selected_symbol, "5m", limit=120)
+            df_5m = pd.DataFrame(raw_5m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            df_5m["Zaman"] = pd.to_datetime(df_5m["Zaman"], unit="ms")
+            df_5m = calculate_nw_bands(df_5m, 3.0, "_5m")
+            df_5m["RSI"] = calculate_rsi(df_5m["Kapanis"])
+
             raw_15m = exchange.fetch_ohlcv(selected_symbol, "15m", limit=120)
             df_15m = pd.DataFrame(raw_15m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
             df_15m["Zaman"] = pd.to_datetime(df_15m["Zaman"], unit="ms")
             df_15m = calculate_nw_bands(df_15m, 3.0, "_15m")
             df_15m["RSI"] = calculate_rsi(df_15m["Kapanis"])
+
+            raw_1h = exchange.fetch_ohlcv(selected_symbol, "1h", limit=120)
+            df_1h = pd.DataFrame(raw_1h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            df_1h["Zaman"] = pd.to_datetime(df_1h["Zaman"], unit="ms")
+            df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
+            df_1h["RSI"] = calculate_rsi(df_1h["Kapanis"])
 
             raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=120)
             df_4h = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
@@ -418,9 +420,8 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
 
             # =================== 5. TEK BİR ZAMAN DİLİMİ ÜZERİNDEN GENİŞLEYEN DCA HİYERARŞİSİ ===================
-            # Görüntüdeki K2 > K1 hatasını düzeltmek için tüm kademeler tek zaman diliminde kademelendirilir.
             if not is_volatile:
-                # Sakin Piyasa (Sistem A): 5m mumu üzerinden K1 (0.70x), K2 (0.85x) ve K3 (1.00x) sapmaları hesaplanır.
+                # Sakin Piyasa: 5m mumu üzerinden genişleyen K1, K2, K3
                 df_active = df_5m.copy()
                 df_active = calculate_nw_bands(df_active, 3.0 * 0.70, "_K1")
                 df_active = calculate_nw_bands(df_active, 3.0 * 0.85, "_K2")
@@ -438,7 +439,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (5m - K1)", "Kademe 2 (5m - K2)", "Kademe 3 (5m - K3)"
                 active_engine_name = "⏱️ SİSTEM A: SCALP (5m - Genişleyen Bantlar)"
             else:
-                # Volatil Piyasa (Sistem B): 1h mumu üzerinden K1 (0.70x), K2 (0.85x) ve K3 (1.00x) sapmaları hesaplanır.
+                # Volatil Piyasa: 1h mumu üzerinden genişleyen K1, K2, K3
                 df_active = df_1h.copy()
                 df_active = calculate_nw_bands(df_active, 3.0 * 0.70, "_K1")
                 df_active = calculate_nw_bands(df_active, 3.0 * 0.85, "_K2")
