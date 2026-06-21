@@ -99,7 +99,7 @@ def get_market_movers_and_funding():
         df_l['Değişim (%)'] = df_l['Değişim (%)'].apply(lambda x: f"{x:.2f}%")
         df_l['Fonlama Oranı'] = df_l['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
         df_l['Fiyat (USDT)'] = df_l['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
-        return funding[:5], df_g, df_l
+        return funding[:10], df_g, df_l # Top 5 dilimi Top 10 olarak genişletildi
     except:
         return [], pd.DataFrame(), pd.DataFrame()
 
@@ -160,6 +160,7 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
     return fig
 
 # Global veriler
+extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
 top_50_data = get_top_50_volume_coins()
 
 # ================= YAN PANEL AYARLARI VE NAVİGASYON =================
@@ -174,6 +175,19 @@ selected_display = st.sidebar.selectbox("🔥 Vadeli Coin Seçin", [x['display']
 selected_symbol = [x['symbol'] for x in top_50_data if x['display'] == selected_display][0]
 coin_title = selected_symbol.split(':')[0]
 state_prefix = f"{selected_symbol}_"
+
+# ================= YENİ: YAN PANEL FONLAMA ORANLARI YAZDIRMA (TOP 10) =================
+st.sidebar.markdown("---")
+st.sidebar.subheader("💸 En Ekstrem Fonlama Oranları (Top 10)")
+if extreme_rates:
+    for item in extreme_rates:
+        rate_str = f"{item['rate']:+.4f}%"
+        if item['rate'] < 0:
+            st.sidebar.markdown(f"**{item['symbol']}**: :green[{rate_str}]")
+        else:
+            st.sidebar.markdown(f"**{item['symbol']}**: :red[{rate_str}]")
+else:
+    st.sidebar.write("Fonlama oranları yükleniyor...")
 
 try:
     db_query = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).execute()
@@ -214,8 +228,8 @@ def save_state_to_db():
 try:
     ticker_info = exchange.fetch_ticker(selected_symbol)
     coin_price = ticker_info.get('last') or ticker_info.get('close') or 63000.0
-    scale_factor = 63000.0 / coin_price
-    layer_sizes = [0.0001 * scale_factor, 0.0002 * scale_factor, 0.0012 * scale_factor]
+    scale = 63000.0 / coin_price
+    layer_sizes = [0.0001 * scale, 0.0002 * scale, 0.0012 * scale]
 except:
     layer_sizes = [0.0001, 0.0002, 0.0012]
 
@@ -251,20 +265,12 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                 df_bt = calculate_nw_bands(df_bt, bt_std * 0.85, "_K2")
                 df_bt = calculate_nw_bands(df_bt, bt_std, "_K3")
                 
-                initial_balance = 1000.0
-                balance = initial_balance
-                
-                l_status = [False, False, False]
-                l_crypto = 0.0
-                l_usd_spent = 0.0
-                l_avg_price = 0.0
-                
-                equity_curve = []
-                trade_logs = []
+                initial_balance, balance = 1000.0, 1000.0
+                l_status, l_crypto, l_usd_spent, l_avg_price = [False, False, False], 0.0, 0.0, 0.0
+                equity_curve, trade_logs = [], []
                 
                 for i, row in df_bt.iterrows():
-                    close = row["Kapanis"]
-                    t_time = row["Zaman"]
+                    close, t_time = row["Kapanis"], row["Zaman"]
                     
                     if sum(l_status) > 0:
                         l_tp_target = l_avg_price * (1 + bt_tp)
@@ -352,8 +358,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
             # =================== 4. YENİ GELİŞMİŞ NATIVE VERİ TAKİBİ (120 MUM TAMPONLU) ===================
-            # Geri bildiriminiz doğrultusunda resample yerine doğrudan borsadan native mumlar çekiliyor.
-            # rolling(20) standard sapma hesabı ilk 19 mumda NaN ürettiği için 120 mum çekilip tail(100) ile tam 100 sağlıklı mum çizilir.
             raw_1m = exchange.fetch_ohlcv(selected_symbol, "1m", limit=120)
             df_1m = pd.DataFrame(raw_1m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
             df_1m["Zaman"] = pd.to_datetime(df_1m["Zaman"], unit="ms")
@@ -476,7 +480,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
 
             # SHORT GİRİŞLERİ
             for idx, th, val in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes):
-                # HATA GİDERİCİ: th Cliff yazım hatası tamamen düzeltildi
                 if current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]:
                     st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
                     st.session_state[f"{state_prefix}s_crypto"] += val
@@ -515,7 +518,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key=f"{state_prefix}chart_1d")
 
                 # =================== TASARIMSAL DÜZELTME: DCA KADEMELERİ SOL SÜTUNA (BOŞLUĞA) TAŞINDI ===================
-                # Curved/Ultrawide monitörlerde sol sütunun altında oluşan koca boşluğu doldurmak için DCA Yönetim Kartı buraya yerleştirildi.
                 st.markdown("---")
                 st.write("🎯 **Canlı Sinyal DCA Yönetim Kartı**")
                 col_l, col_s = st.columns(2)
@@ -581,7 +583,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.write("**15m (Normal)**"); st.code(f"{rsi_15m_val:.1f}")
                     st.write("**1d (Ana Trend)**"); st.code(f"{rsi_1d_val:.1f}")
 
-            # Günlük Piyasa Liderleri (Yığılmayı önlemek için main_container içerisine alındı)
+            # Günlük Piyasa Liderleri
             st.markdown("---")
             st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
             col_g, col_lo = st.columns(2)
