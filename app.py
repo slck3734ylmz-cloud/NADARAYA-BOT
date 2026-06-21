@@ -156,7 +156,7 @@ def get_market_movers_and_funding():
                     base_vol = ticker.get('baseVolume') or 0.0
                     volume = base_vol * price
                 
-                # 2. Fonlama Oranı Verisi (Hata düzeltildi, tüm gereksiz kod kalıntıları silindi)
+                # 2. Fonlama Oranı Verisi
                 raw_info = ticker.get('info', {})
                 funding_val = raw_info.get('funding_rate')
                 fr_val = float(funding_val) * 100.0 if funding_val is not None else 0.0
@@ -201,11 +201,10 @@ def get_market_movers_and_funding():
     except Exception as e:
         return [], pd.DataFrame(), pd.DataFrame()
 
-# ================= 3 GÜNLÜK SANAL LİKİDASYON HARİTASI HESAPLAMA (YENİ EKLEME) =================
+# ================= 3 GÜNLÜK SANAL LİKİDASYON HARİTASI HESAPLAMA =================
 @st.cache_data(ttl=300)
 def estimate_liquidation_pools(symbol):
     try:
-        # 3 günlük veri = 72 saatlik mum (1h)
         raw_3d = exchange.fetch_ohlcv(symbol, "1h", limit=72)
         df_3d = pd.DataFrame(raw_3d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         
@@ -213,36 +212,30 @@ def estimate_liquidation_pools(symbol):
         lows = df_3d["Dusuk"].values
         volumes = df_3d["Hacim"].values
         
-        # Coinin fiyatına göre yuvarlama basamağını dinamik belirliyoruz
         current_p = df_3d.iloc[-1]["Kapanis"]
         round_step = 50.0 if current_p > 10000 else (1.0 if current_p > 100 else (0.1 if current_p > 1 else 0.01))
         
         long_liq_bins = {}
         short_liq_bins = {}
         
-        # Kaldıraç seviyelerine göre likidasyonları kümele (100x: %1, 50x: %2, 25x: %4)
         for i in range(len(df_3d)):
             h = highs[i]
             l = lows[i]
             vol = volumes[i]
             
-            # Long likidasyonları diplerin altında birikir:
             for lev_mult in [0.99, 0.98, 0.96]:
                 liq_p = l * lev_mult
                 bin_p = round(liq_p / round_step) * round_step
                 long_liq_bins[bin_p] = long_liq_bins.get(bin_p, 0.0) + vol
                 
-            # Short likidasyonları tepelerin üstünde birikir:
             for lev_mult in [1.01, 1.02, 1.04]:
                 liq_p = h * lev_mult
                 bin_p = round(liq_p / round_step) * round_step
                 short_liq_bins[bin_p] = short_liq_bins.get(bin_p, 0.0) + vol
                 
-        # En yoğun 3 bölgeyi seç
         sorted_long = sorted(long_liq_bins.items(), key=lambda x: x[1], reverse=True)[:3]
         sorted_short = sorted(short_liq_bins.items(), key=lambda x: x[1], reverse=True)[:3]
         
-        # Tablo formatına çevir
         long_pools = []
         for p, v in sorted_long:
             density = "🔴🔴🔴 YÜKSEK" if v > np.mean(volumes)*1.5 else "🔴🔴 ORTA"
@@ -428,8 +421,8 @@ while True:
         ma_up_1h = up_1h.rolling(14).mean()
         ma_down_1h = down_1h.rolling(14).mean()
         rs_1h = ma_up_1h / ma_down_1h
-        df_1h["RSI_14"] = 100 - (100 / (1 + rs_1h))
-        df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h", "RSI_14"]].sort_values("Zaman"), on="Zaman", direction="backward", suffixes=('', '_1h'))
+        df_1h["RSI_14_1h"] = 100 - (100 / (1 + rs_1h))  # BUG FIX: Benzersiz sütun ismi verildi
+        df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h", "RSI_14_1h"]].sort_values("Zaman"), on="Zaman", direction="backward")
 
         # 4h resample ve NW hesaplama (Sapma: 3.0)
         df_4h_res = df.resample("240min", on="Zaman").last().ffill().reset_index()
@@ -440,8 +433,8 @@ while True:
         ma_up_4h = up_4h.rolling(14).mean()
         ma_down_4h = down_4h.rolling(14).mean()
         rs_4h = ma_up_4h / ma_down_4h
-        df_4h_res["RSI_14"] = 100 - (100 / (1 + rs_4h))
-        df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h", "RSI_14"]].sort_values("Zaman"), on="Zaman", direction="backward")
+        df_4h_res["RSI_14_4h"] = 100 - (100 / (1 + rs_4h))  # BUG FIX: Benzersiz sütun ismi verildi
+        df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h", "RSI_14_4h"]].sort_values("Zaman"), on="Zaman", direction="backward")
 
         # 1 günlük (1d) grafik için veri çekme
         raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=100)
@@ -449,7 +442,7 @@ while True:
         df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
         df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
 
-        # 4. YENİ EKLEME: Seçilen Coin için 3 Günlük Likidasyon Havuzlarını Tahmin Et
+        # Seçilen Coin için 3 Günlük Likidasyon Havuzlarını Tahmin Et
         df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
 
         latest_row = df.iloc[-1]
@@ -467,8 +460,8 @@ while True:
 
         # Canlı Iraksama Analizini Yapıyoruz
         bull_div_5m, bear_div_5m = detect_rsi_divergence(df["Kapanis"].values, df["RSI_14"].values)
-        bull_div_1h, bear_div_1h = detect_rsi_divergence(df_1h["Kapanis"].values, df_1h["RSI_14"].values)
-        bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h_res["Kapanis"].values, df_4h_res["RSI_14"].values)
+        bull_div_1h, bear_div_1h = detect_rsi_divergence(df_1h["Kapanis"].values, df_1h["RSI_14_1h"].values)
+        bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h_res["Kapanis"].values, df_4h_res["RSI_14_4h"].values)
 
         # =================== LONG POZİSYON ÇIKIŞLARI ===================
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
