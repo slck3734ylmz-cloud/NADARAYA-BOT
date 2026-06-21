@@ -7,15 +7,15 @@ import requests
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-# Streamlit sayfa yapılandırması
-st.set_page_config(page_title="DCA Live Hedging Dashboard", layout="wide")
+# Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
+st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
 # Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz
 plt.style.use('dark_background')
 
 # ================= ENTEGRE EDİLMİŞ TELEGRAM AYARLARINIZ =================
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
-telegram_chat_id = "@kyounkripto"
+telegram_chat_id = "665969213"
 # =========================================================================
 
 # GATE.IO FUTURES BAĞLANTISI (Vadeli Modu Aktif)
@@ -157,8 +157,9 @@ else:
     st.sidebar.write("Fonlama oranları yükleniyor...")
 st.sidebar.markdown("---")
 
-# GERİ SAYIM SAYACI İÇİN ALAN (Sleek Sidebar Countdown)
-countdown_placeholder = st.sidebar.empty()
+# GERİ SAYIM SAYACI ALANI
+st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
+countdown_placeholder = st.sidebar.progress(0)
 
 # Seçilen coinin durum değişkenleri (Her coin için bağımsız session_state saklanır)
 state_prefix = f"{selected_symbol}_"
@@ -216,13 +217,8 @@ def calculate_nw_bands(df, std_multiplier, col_suffix):
     df[f"NW_Alt{col_suffix}"] = df["NW_Merkez"] - (std_multiplier * df["Sapma_Std"])
     return df
 
-# Ekran Güncelleme Alanları (Placeholders)
-title_placeholder = st.empty()
-trend_placeholder = st.empty()
-rsi_placeholder = st.empty()
-dca_cards_placeholder = st.empty()
-chart_placeholder = st.empty()
-log_placeholder = st.empty()
+# Ekran Güncelleme Alanı (Grid Layout için Boşluklar)
+main_container = st.empty()
 
 # Canlı Taramayı Başlat
 while True:
@@ -242,7 +238,7 @@ while True:
         df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
         
-        # 5m NW ve RSI (Sapma: Birebir 3.0 Std)
+        # 5m NW ve RSI (Sapma: 3.0)
         df = calculate_nw_bands(df, 3.0, "_5m")
         delta = df["Kapanis"].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -250,7 +246,7 @@ while True:
         rs = gain / loss
         df["RSI_14"] = 100 - (100 / (1 + rs))
 
-        # 1h resample ve NW hesaplama (Sapma: Birebir 3.0 Std)
+        # 1h resample ve NW hesaplama (Sapma: 3.0)
         df_1h = df.resample("60min", on="Zaman").last().ffill().reset_index()
         df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
         diff_1h = df_1h["Kapanis"].diff()
@@ -262,10 +258,16 @@ while True:
         df_1h["RSI_14"] = 100 - (100 / (1 + rs_1h))
         df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h", "RSI_14"]].sort_values("Zaman"), on="Zaman", direction="backward", suffixes=('', '_1h'))
 
-        # 4h resample ve NW hesaplama (Sapma: Birebir 3.0 Std)
+        # 4h resample ve NW hesaplama (Sapma: 3.0)
         df_4h_res = df.resample("240min", on="Zaman").last().ffill().reset_index()
         df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
         df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h"]].sort_values("Zaman"), on="Zaman", direction="backward")
+
+        # 1 günlük (1d) grafik için veri çekme
+        raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=100)
+        df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
+        df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
 
         latest_row = df.iloc[-1]
         current_price = latest_row["Kapanis"]
@@ -282,22 +284,15 @@ while True:
         # Canlı Iraksama Analizini Yapıyoruz
         bull_div_5m, bear_div_5m = detect_rsi_divergence(df["Kapanis"].values, df["RSI_14"].values)
 
-        # 3. YENİ EKLEME: 1 GÜNLÜK (1d) GRAFİK İÇİN BORSA SORGULAMASI (3.0 Standart Sapma)
-        raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=100)
-        df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-        df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
-        df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
-
         # =================== LONG POZİSYON ÇIKIŞLARI ===================
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
             l_tp = st.session_state[f"{state_prefix}l_avg_price"] * (1 + target_profit_ratio)
             
-            # Kural: Stop-loss yalnızca 3. kademe alındıysa aktifleşir ve son alım fiyatının (NW_Alt_4h) %1 aşağısıdır
             if st.session_state[f"{state_prefix}l_status"][2]:
                 l_stop = nw_alt_4h * (1 - stop_loss_ratio)
                 if current_price <= l_stop:
                     st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                    msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f} (Son Alımın %1 Altı)"
+                    msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
                     send_telegram_msg(msg)
                     st.session_state[f"{state_prefix}log_history"].append(msg)
                     st.session_state[f"{state_prefix}l_crypto"] = 0.0
@@ -307,7 +302,7 @@ while True:
                     
             if current_price >= l_tp and sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                msg = f"🟢 *LONG ORTAK KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
+                msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"] = 0.0
@@ -319,13 +314,12 @@ while True:
         if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
             s_tp = st.session_state[f"{state_prefix}s_avg_price"] * (1 - target_profit_ratio)
 
-            # Kural: Stop-loss sadece 3. kademe alındıysa aktifleşir ve son alım fiyatının (NW_Ust_4h) %1 yukarısıdır
             if st.session_state[f"{state_prefix}s_status"][2]:
                 s_stop = nw_ust_4h * (1 + stop_loss_ratio)
                 if current_price >= s_stop:
                     pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
                     st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
-                    msg = f"🔴 *SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f} (Son Alımın %1 Üstü)"
+                    msg = f"🔴 *SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
                     send_telegram_msg(msg)
                     st.session_state[f"{state_prefix}log_history"].append(msg)
                     st.session_state[f"{state_prefix}s_crypto"] = 0.0
@@ -412,170 +406,158 @@ while True:
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
 
-        # =================== EKRAN GÜNCELLEMELERİ (WEB UI) ===================
-        with title_placeholder.container():
-            st.title(f"📊 {selected_symbol.split(':')[0]} Vadeli DCA Canlı Takip Paneli")
-            st.write(f"Binance/Bybit Eşzamanlı Canlı Fiyatı: **{current_price:.2f} USDT**")
-
-        with trend_placeholder.container():
-            col_t1, col_t2 = st.columns(2)
-            col_t1.metric(label="4 Saatlik Genel Trend Yönü", value=trend_4h)
-            if trend_4h == "YUKARI (BOĞA)":
-                col_t2.success(f"🛡️ Emniyet Uyarısı: {warning_msg}")
-            else:
-                col_t2.error(f"🛡️ Emniyet Uyarısı: {warning_msg}")
-
-        # RSI & IRAKSAMA PANELİ GÜNCELLEME
-        with rsi_placeholder.container():
-            st.subheader("⚡ RSI & Momentum Sinyal Güç Süzgeci")
-            col_r1, col_r2, col_r3 = st.columns(3)
-            rsi_5m_state = f"{rsi_5m:.1f} (AŞIRI SATIM 🟢)" if rsi_5m < 30 else (f"{rsi_5m:.1f} (AŞIRI ALIM 🔴)" if rsi_5m > 70 else f"{rsi_5m:.1f} (NÖTR ⚪)")
-            div_5m_state = "📈 BOĞA IRAKSAMASI VAR!" if bull_div_5m else ("📉 AYI IRAKSAMASI VAR!" if bear_div_5m else "Yok")
-            col_r1.metric(label="5m Anlık RSI Gücü", value=rsi_5m_state, delta=div_5m_state, delta_color="normal" if "VAR" in div_5m_state else "off")
-            rsi_1h_state = f"{rsi_1h:.1f} (AŞIRI SATIM 🟢)" if rsi_1h < 30 else (f"{rsi_1h:.1f} (AŞIRI ALIM 🔴)" if rsi_1h > 70 else f"{rsi_1h:.1f} (NÖTR ⚪)")
-            col_r2.metric(label="1h Anlık RSI Gücü", value=rsi_1h_state)
-            col_r3.metric(label="4h Anlık RSI Gücü", value="50.0 (NÖTR ⚪)")
-
-        # Dinamik Kademe ve Hedef Kartı (DCA Sinyal Kartı)
-        with dca_cards_placeholder.container():
-            st.subheader("🎯 Canlı Sinyal Takip ve DCA Yönetim Kartı")
+        # =================== EKRAN GÜNCELLEMELERİ (WEB UI - PRO GRID TASARIM) ===================
+        with main_container.container():
+            # Ekranı sola ve sağa iki ana sütuna bölüyoruz (Dikey kaydırmayı sıfırlayan GRID yapı)
+            col_left, col_right = st.columns([1.6, 1]) # Sol %60, Sağ %40 ağırlıkta
             
-            col_l, col_s = st.columns(2)
-            
-            # --- LONG GRID KARTI ---
-            with col_l:
-                st.info("📈 LONG (Boğa) KADEMELERİ")
-                k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f} USDT)" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_5m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
-                k2_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][1] else f"⏳ Bekliyor ({nw_alt_1h:.2f} | {layer_sizes[1]:.4f} {selected_symbol.split('/')[0]})"
-                k3_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_4h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
+            # --- SOL SÜTUN (SADECE GRAFİKLER) ---
+            with col_left:
+                st.subheader("📈 Canlı Fiyat ve Nadaraya-Watson Zarf Grafikleri")
+                tab_5m, tab_1h, tab_4h, tab_1d = st.tabs(["⏱️ 5 Dakikalık Grafik", "⏱️ 1 Saatlik Grafik", "⏱️ 4 Saatlik Grafik", "🌎 1 Günlük Grafik"])
+                df_subset = df.tail(100)
                 
-                st.write(f"**Kademe 1 (5m):** {k1_status}")
-                st.write(f"**Kademe 2 (1h):** {k2_status}")
-                st.write(f"**Kademe 3 (4h):** {k3_status}")
+                # 5m Sekmesi (Karanlık Tema)
+                with tab_5m:
+                    fig1, ax1 = plt.subplots(figsize=(15, 6), facecolor='#0e1117')
+                    ax1.set_facecolor('#0e1117')
+                    ax1.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2.5)
+                    ax1.plot(df_subset["Zaman"], df_subset["NW_Alt_5m"], label="Alt Band (5m - 3.0 Std)", color="limegreen", linestyle="--")
+                    ax1.plot(df_subset["Zaman"], df_subset["NW_Ust_5m"], label="Üst Band (5m - 3.0 Std)", color="crimson", linestyle="--")
+                    
+                    if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
+                        ax1.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
+                    if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
+                        ax1.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
+                    
+                    ax1.legend(loc="upper left")
+                    ax1.grid(True, color='white', alpha=0.03)
+                    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+                    st.pyplot(fig1)
+                    plt.close(fig1)
+                    
+                # 1h Sekmesi (Karanlık Tema)
+                with tab_1h:
+                    fig2, ax2 = plt.subplots(figsize=(15, 6), facecolor='#0e1117')
+                    ax2.set_facecolor('#0e1117')
+                    ax2.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2)
+                    ax2.plot(df_subset["Zaman"], df_subset["NW_Alt_1h"], label="Alt Band (1h - 3.0 Std)", color="forestgreen", linestyle="--")
+                    ax2.plot(df_subset["Zaman"], df_subset["NW_Ust_1h"], label="Üst Band (1h - 3.0 Std)", color="firebrick", linestyle="--")
+                    
+                    if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
+                        ax2.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
+                    if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
+                        ax2.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
+                    
+                    ax2.legend(loc="upper left")
+                    ax2.grid(True, color='white', alpha=0.03)
+                    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+                    st.pyplot(fig2)
+                    plt.close(fig2)
+                    
+                # 4h Sekmesi (Karanlık Tema)
+                with tab_4h:
+                    fig3, ax3 = plt.subplots(figsize=(15, 6), facecolor='#0e1117')
+                    ax3.set_facecolor('#0e1117')
+                    ax3.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2)
+                    ax3.plot(df_subset["Zaman"], df_subset["NW_Alt_4h"], label="Alt Band (4h - 3.0 Std)", color="darkgreen", linestyle="-")
+                    ax3.plot(df_subset["Zaman"], df_subset["NW_Ust_4h"], label="Üst Band (4h - 3.0 Std)", color="darkred", linestyle="-")
+                    
+                    if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
+                        ax3.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
+                    if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
+                        ax3.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
+                    
+                    ax3.legend(loc="upper left")
+                    ax3.grid(True, color='white', alpha=0.03)
+                    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+                    st.pyplot(fig3)
+                    plt.close(fig3)
+                    
+                # 1d Sekmesi (Karanlık Tema)
+                with tab_1d:
+                    fig4, ax4 = plt.subplots(figsize=(15, 6), facecolor='#0e1117')
+                    ax4.set_facecolor('#0e1117')
+                    df_1d_subset = df_1d.tail(30)
+                    ax4.plot(df_1d_subset["Zaman"], df_1d_subset["Kapanis"], label="Günlük Kapanış Fiyatı", color="royalblue", linewidth=2.5)
+                    ax4.plot(df_1d_subset["Zaman"], df_1d_subset["NW_Alt_1d"], label="Alt Band (1d - 3.0 Std)", color="limegreen", linestyle="-")
+                    ax4.plot(df_1d_subset["Zaman"], df_1d_subset["NW_Ust_1d"], label="Üst Band (1d - 3.0 Std)", color="crimson", linestyle="-")
+                    
+                    ax4.legend(loc="upper left")
+                    ax4.grid(True, color='white', alpha=0.03)
+                    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%d/%m"))
+                    st.pyplot(fig4)
+                    plt.close(fig4)
+
+            # --- SAĞ SÜTUN (KONTROL MASASI VE GÖSTERGELER) ---
+            with col_right:
+                # 1. Başlık
+                st.subheader(f"📊 {selected_symbol.split(':')[0]} Canlı Terminal")
+                st.write(f"Anlık Vadeli Fiyat: **{current_price:.2f} USDT**")
                 
-                if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-                    l_tp = st.session_state[f"{state_prefix}l_avg_price"] * 1.01
-                    l_sl = nw_alt_4h * 0.99 if st.session_state[f"{state_prefix}l_status"][2] else "PASİF (3. Kademeden Sonra)"
-                    st.write(f"**Ortalama Giriş Fiyatı:** {st.session_state[f'{state_prefix}l_avg_price']:.2f} USDT")
-                    st.write(f"🟢 **Kar-Al Hedefi (%1):** {l_tp:.2f} USDT")
-                    st.write(f"🔴 **Stop-Loss (%2):** {f'{l_sl:.2f} USDT' if isinstance(l_sl, float) else l_sl}")
+                # 2. Trend Kartı
+                st.markdown("---")
+                col_t1, col_t2 = st.columns([1, 1.2])
+                col_t1.metric(label="4h Genel Trend", value=trend_4h)
+                if trend_4h == "YUKARI (BOĞA)":
+                    col_t2.success(f"🛡️ Emniyet: {warning_msg}")
                 else:
-                    st.write("*Aktif Long pozisyon bulunmuyor.*")
+                    col_t2.error(f"🛡️ Emniyet: {warning_msg}")
+                
+                # 3. RSI & Iraksama Kartı
+                st.markdown("---")
+                st.write("⚡ **RSI & Momentum Süzgeci**")
+                rsi_5m_state = f"{rsi_5m:.1f} (AŞIRI SATIM 🟢)" if rsi_5m < 30 else (f"{rsi_5m:.1f} (AŞIRI ALIM 🔴)" if rsi_5m > 70 else f"{rsi_5m:.1f} (NÖTR ⚪)")
+                div_5m_state = "📈 BOĞA IRAKSAMASI!" if bull_div_5m else ("📉 AYI IRAKSAMASI!" if bear_div_5m else "Yok")
+                st.metric(label="5m Anlık RSI Gücü", value=rsi_5m_state, delta=div_5m_state, delta_color="normal" if "VAR" in div_5m_state else "off")
+                st.write(f"**1h RSI Değeri:** {rsi_1h:.1f} (NÖTR ⚪)")
+                
+                # 4. DCA Sinyal Takip ve Yönetim Kartı
+                st.markdown("---")
+                st.write("🎯 **Canlı Sinyal Takip ve DCA Yönetim Kartı**")
+                col_l, col_s = st.columns(2)
+                
+                with col_l:
+                    st.info("📈 LONG KADEMELERİ")
+                    k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f})" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_5m:.2f} | {layer_sizes[0]:.4f} BTC)"
+                    k2_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][1] else f"⏳ Bekliyor ({nw_alt_1h:.2f} | {layer_sizes[1]:.4f} BTC)"
+                    k3_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_4h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
+                    st.write(f"**K1 (5m):** {k1_status}")
+                    st.write(f"**K2 (1h):** {k2_status}")
+                    st.write(f"**K3 (4h):** {k3_status}")
+                    if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
+                        l_tp = st.session_state[f"{state_prefix}l_avg_price"] * 1.01
+                        l_sl = nw_alt_4h * 0.99 if st.session_state[f"{state_prefix}l_status"][2] else "PASİF (3. Kademeden Sonra)"
+                        st.write(f"**Ort. Giriş:** {st.session_state[f'{state_prefix}l_avg_price']:.2f}")
+                        st.write(f"🟢 **Kar-Al (%1):** {l_tp:.2f}")
+                        st.write(f"🔴 **Stop (%2):** {f'{l_sl:.2f}' if isinstance(l_sl, float) else l_sl}")
 
-            # --- SHORT GRID KARTI ---
-            with col_s:
-                st.error("📉 SHORT (Ayı) KADEMELERİ")
-                s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_avg_price']:.2f} USDT)" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_5m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
-                s_k2_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][1] else f"⏳ Bekliyor ({nw_ust_1h:.2f} | {layer_sizes[1]:.4f} {selected_symbol.split('/')[0]})"
-                s_k3_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_4h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
+                with col_s:
+                    st.error("📉 SHORT KADEMELERİ")
+                    s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_avg_price']:.2f})" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_5m:.2f} | {layer_sizes[0]:.4f} BTC)"
+                    s_k2_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][1] else f"⏳ Bekliyor ({nw_ust_1h:.2f} | {layer_sizes[1]:.4f} BTC)"
+                    s_k3_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_4h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
+                    st.write(f"**K1 (5m):** {s_k1_status}")
+                    st.write(f"**K2 (1h):** {s_k2_status}")
+                    st.write(f"**K3 (4h):** {s_k3_status}")
+                    if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
+                        s_tp = st.session_state[f"{state_prefix}s_avg_price"] * 0.99
+                        s_sl = nw_ust_4h * 1.02 if st.session_state[f"{state_prefix}s_status"][2] else "PASİF (3. Kademeden Sonra)"
+                        st.write(f"**Ort. Giriş:** {st.session_state[f'{state_prefix}s_avg_price']:.2f}")
+                        st.write(f"🟢 **Kar-Al (%1):** {s_tp:.2f}")
+                        st.write(f"🔴 **Stop (%2):** {f'{s_sl:.2f}' if isinstance(s_sl, float) else s_sl}")
                 
-                st.write(f"**Kademe 1 (5m):** {s_k1_status}")
-                st.write(f"**Kademe 2 (1h):** {s_k2_status}")
-                st.write(f"**Kademe 3 (4h):** {s_k3_status}")
-                
-                if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-                    s_tp = st.session_state[f"{state_prefix}s_avg_price"] * 0.99
-                    s_sl = nw_ust_4h * 1.02 if st.session_state[f"{state_prefix}s_status"][2] else "PASİF (3. Kademeden Sonra)"
-                    st.write(f"**Ortalama Giriş Fiyatı:** {st.session_state[f'{state_prefix}s_avg_price']:.2f} USDT")
-                    st.write(f"🟢 **Kar-Al Hedefi (%1):** {s_tp:.2f} USDT")
-                    st.write(f"🔴 **Stop-Loss (%2):** {f'{s_sl:.2f} USDT' if isinstance(s_sl, float) else s_sl}")
-                else:
-                    st.write("*Aktif Short pozisyon bulunmuyor.*")
-
-        # Web Sayfası Grafiğini Güncelleme (4 Sekmeli ve KARANLIK TEMA Tasarımı)
-        with chart_placeholder.container():
-            tab_5m, tab_1h, tab_4h, tab_1d = st.tabs(["⏱️ 5 Dakikalık Grafik", "⏱️ 1 Saatlik Grafik", "⏱️ 4 Saatlik Grafik", "🌎 1 Günlük Grafik"])
-            
-            # --- 5 DAKİKALIK GRAFİK SEKMESTİ (KARANLIK TEMA) ---
-            with tab_5m:
-                fig1, ax1 = plt.subplots(figsize=(15, 4.5), facecolor='#0e1117') # Web sayfa rengiyle uyumlu koyu arka plan
-                ax1.set_facecolor('#0e1117')
-                
-                df_subset = df.tail(100) # Son 100 mumu yakınlaştırarak çiziyoruz (görsel netlik)
-                ax1.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2)
-                ax1.plot(df_subset["Zaman"], df_subset["NW_Alt_5m"], label="Alt Band (5m)", color="limegreen", linestyle="--")
-                ax1.plot(df_subset["Zaman"], df_subset["NW_Ust_5m"], label="Üst Band (5m)", color="crimson", linestyle="--")
-                
-                # Pozisyon çizgileri
-                if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-                    ax1.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
-                if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-                    ax1.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
-                
-                ax1.legend(loc="upper left")
-                ax1.grid(True, color='white', alpha=0.05) # Çok hafif beyaz ızgaralar
-                plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-                st.pyplot(fig1)
-                plt.close(fig1)
-                
-            # --- 1 SAATLİK GRAFİK SEKMESTİ (KARANLIK TEMA) ---
-            with tab_1h:
-                fig2, ax2 = plt.subplots(figsize=(15, 4.5), facecolor='#0e1117')
-                ax2.set_facecolor('#0e1117')
-                
-                ax2.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2)
-                ax2.plot(df_subset["Zaman"], df_subset["NW_Alt_1h"], label="Alt Band (1h)", color="forestgreen", linestyle="--")
-                ax2.plot(df_subset["Zaman"], df_subset["NW_Ust_1h"], label="Üst Band (1h)", color="firebrick", linestyle="--")
-                
-                if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-                    ax2.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
-                if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-                    ax2.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
-                
-                ax2.legend(loc="upper left")
-                ax2.grid(True, color='white', alpha=0.05)
-                plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-                st.pyplot(fig2)
-                plt.close(fig2)
-                
-            # --- 4 SAATLİK GRAFİK SEKMESTİ (KARANLIK TEMA) ---
-            with tab_4h:
-                fig3, ax3 = plt.subplots(figsize=(15, 4.5), facecolor='#0e1117')
-                ax3.set_facecolor('#0e1117')
-                
-                ax3.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2)
-                ax3.plot(df_subset["Zaman"], df_subset["NW_Alt_4h"], label="Alt Band (4h)", color="darkgreen", linestyle="-")
-                ax3.plot(df_subset["Zaman"], df_subset["NW_Ust_4h"], label="Üst Band (4h)", color="darkred", linestyle="-")
-                
-                if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-                    ax3.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
-                if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-                    ax3.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
-                
-                ax3.legend(loc="upper left")
-                ax3.grid(True, color='white', alpha=0.05)
-                plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-                st.pyplot(fig3)
-                plt.close(fig3)
-
-            # --- 1 GÜNLÜK GRAFİK SEKMESTİ ---
-            with tab_1d:
-                fig4, ax4 = plt.subplots(figsize=(15, 4.5), facecolor='#0e1117')
-                ax4.set_facecolor('#0e1117')
-                
-                df_1d_subset = df_1d.tail(30)
-                ax4.plot(df_1d_subset["Zaman"], df_1d_subset["Kapanis"], label="Günlük Kapanış Fiyatı", color="royalblue", linewidth=2.5)
-                ax4.plot(df_1d_subset["Zaman"], df_1d_subset["NW_Alt_1d"], label="Alt Band (1d - 3.0 Std)", color="limegreen", linestyle="-")
-                ax4.plot(df_1d_subset["Zaman"], df_1d_subset["NW_Ust_1d"], label="Üst Band (1d - 3.0 Std)", color="crimson", linestyle="-")
-                
-                ax4.legend(loc="upper left")
-                ax4.grid(True, color='white', alpha=0.05)
-                plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%d/%m"))
-                st.pyplot(fig4)
-                plt.close(fig4)
-
-        # İşlem Loglarını Güncelleme
-        with log_placeholder.container():
-            if st.session_state[f"{state_prefix}log_history"]:
-                st.subheader("📜 Son Sinyaller (Log)")
-                for log in reversed(st.session_state[f"{state_prefix}log_history"][-5:]):
-                    st.write(log)
+                # 5. Son İşlem Logları
+                st.markdown("---")
+                if st.session_state[f"{state_prefix}log_history"]:
+                    st.write("📜 **Son Sinyaller (Log)**")
+                    for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
+                        st.write(log)
 
     except Exception as e:
         st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
         
     # ================= ANLIK GERİ SAYIM SAYACI (ULTRA HIZLI SIDEBAR) =================
-    # time.sleep(10) yerine saniye saniye sayan interaktif sayaç
     for remaining in range(10, 0, -1):
         countdown_placeholder.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
         time.sleep(1)
