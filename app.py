@@ -606,7 +606,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             is_volatile = current_std > historical_median_std
             market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
-            # =================== 4. YENİ GELİŞMİŞ VERİ VE RESAMPLE YAPISI (TÜM ZAMAN DİLİMLERİ İÇİN) ===================
+            # =================== 4. YENİ GELİŞMİŞ VERİ VE RESAMPLE YAPISI (TÜM ZAMAN DİLİMLERİ İÇİN - TAM ENTEGRE) ===================
             # 1 Dakikalık veriler (Master veri)
             raw_candles = exchange.fetch_ohlcv(selected_symbol, "1m", limit=1000)
             df_1m = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
@@ -639,6 +639,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
             df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
             df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
+            df_1d["RSI"] = calculate_rsi(df_1d["Kapanis"])
 
             df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
 
@@ -683,7 +684,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
 
             bull_div_5m, bear_div_5m = detect_rsi_divergence(df_5m["Kapanis"].values, df_5m["RSI"].values)
             bull_div_1h, bear_div_1h = detect_rsi_divergence(df_1h["Kapanis"].values, df_1h["RSI"].values)
-            bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h_res["Kapanis"].values, df_4h_res["RSI_14_4h"].values) if "RSI_14_4h" in df_4h_res else (False, False)
+            bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h["Kapanis"].values, df_4h["RSI"].values)
 
             # LONG ÇIKIŞLARI
             if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
