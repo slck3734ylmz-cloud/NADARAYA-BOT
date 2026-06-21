@@ -35,9 +35,6 @@ if not check_password():
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
-# Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz
-plt.style.use('dark_background')
-
 # ================= ENTEGRE EDİLMİŞ TELEGRAM VE VERİTABANI AYARLARINIZ =================
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
@@ -513,14 +510,20 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                     col_r3.metric("Win Rate (Kazanma Oranı)", f"%{win_rate:.1f}")
                     col_r4.metric("Toplam İşlem", f"{len(df_trades)}")
                     
-                    fig_bt, ax_bt = plt.subplots(figsize=(15, 5), facecolor='#0e1117')
-                    ax_bt.set_facecolor('#0e1117')
-                    ax_bt.plot(df_equity["Zaman"], df_equity["Bakiye"], color="gold", label="Bakiye Gelişimi (Equity)")
-                    ax_bt.axhline(y=initial_balance, color="white", linestyle="--", alpha=0.3)
-                    ax_bt.legend()
-                    ax_bt.grid(True, color='white', alpha=0.03)
-                    st.pyplot(fig_bt)
-                    plt.close(fig_bt)
+                    # Backtest Grafiği interaktif Plotly grafiğine dönüştürüldü (NameError plt hatası çözüldü)
+                    fig_bt = go.Figure()
+                    fig_bt.add_trace(go.Scatter(x=df_equity["Zaman"], y=df_equity["Bakiye"], name="Bakiye Gelişimi (Equity)", line=dict(color="gold", width=2.5)))
+                    fig_bt.add_hline(y=initial_balance, line=dict(color="white", width=1, dash="dash"))
+                    fig_bt.update_layout(
+                        title="Bakiye Gelişim Grafiği (Equity Curve)",
+                        template="plotly_dark",
+                        xaxis_title="Zaman",
+                        yaxis_title="Bakiye (USD)",
+                        margin=dict(l=20, r=20, t=40, b=20),
+                        height=400,
+                        hovermode="x unified"
+                    )
+                    st.plotly_chart(fig_bt, use_container_width=True)
                     
                     st.write("📜 **Gerçekleşen Geçmiş İşlem Detayları**")
                     st.dataframe(df_trades)
@@ -553,7 +556,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
         save_state_to_db()
         st.rerun()
 
-    # Geri sayım sayacı alanı
     st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
     countdown_placeholder = st.sidebar.empty()
 
@@ -587,7 +589,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             is_volatile = current_std > historical_median_std
             market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
-            # =================== 4. YENİ GELİŞMİŞ VERİ VE RESAMPLE YAPISI (TÜM ZAMAN DİLİMLERİ İÇİN) ===================
+            # =================== 4. YENİ GELİŞMİŞ VERİ VE RESAMPLE YAPISI ===================
             # 1 Dakikalık veriler (Master veri)
             raw_candles = exchange.fetch_ohlcv(selected_symbol, "1m", limit=1000)
             df_1m = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
@@ -626,7 +628,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
 
             # Dinamik bandlar hangi sisteme göre seçilecek?
             if not is_volatile:
-                # Sakin piyasa motoru (1m/5m/15m kademeleri)
                 dyn_alt_5m = df_1m.iloc[-1]["NW_Alt_1m"]
                 dyn_alt_1h = df_5m.iloc[-1]["NW_Alt_5m"]
                 dyn_alt_4h = df_15m.iloc[-1]["NW_Alt_15m"]
@@ -637,7 +638,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (1m)", "Kademe 2 (5m)", "Kademe 3 (15m)"
                 active_engine_name = "⏱️ SİSTEM A: ULTRA HIZLI SCALP (1m/5m/15m)"
             else:
-                # Volatil piyasa motoru (5m/1h/4h kademeleri)
                 dyn_alt_5m = df_5m.iloc[-1]["NW_Alt_5m"]
                 dyn_alt_1h = df_1h.iloc[-1]["NW_Alt_1h"]
                 dyn_alt_4h = df_4h.iloc[-1]["NW_Alt_4h"]
@@ -961,6 +961,22 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.write("📜 **Son Sinyaller (Log)**")
                     for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
                         st.write(log)
+
+            # SIFIRLAMA BUTONU
+            st.markdown("---")
+            if st.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="reset_all_positions_button"):
+                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                st.session_state[f"{state_prefix}l_crypto"] = 0.0
+                st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
+                st.session_state[f"{state_prefix}l_avg_price"] = 0.0
+                st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                st.session_state[f"{state_prefix}s_crypto"] = 0.0
+                st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
+                st.session_state[f"{state_prefix}s_avg_price"] = 0.0
+                st.session_state[f"{state_prefix}balance_usd"] = 100.0
+                st.session_state[f"{state_prefix}locked_prices"] = None
+                save_state_to_db()
+                st.rerun()
 
         except Exception as e:
             st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
