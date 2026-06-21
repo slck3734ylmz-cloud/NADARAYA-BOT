@@ -158,7 +158,6 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
     return fig
 
 # Global veriler
-extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
 top_50_data = get_top_50_volume_coins()
 
 # ================= YAN PANEL AYARLARI VE NAVİGASYON =================
@@ -382,6 +381,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             df_1d["RSI"] = calculate_rsi(df_1d["Kapanis"])
 
             df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
+            extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
 
             if not is_volatile:
                 dyn_alt_5m, dyn_alt_1h, dyn_alt_4h = df_1m.iloc[-1]["NW_Alt_1m"], df_5m.iloc[-1]["NW_Alt_5m"], df_15m.iloc[-1]["NW_Alt_15m"]
@@ -515,6 +515,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
 
             with col_right:
                 st.subheader(f"📊 {coin_title} Canlı Terminal")
+                st.caption(f"🕒 Son veri güncellemesi: {time.strftime('%H:%M:%S')}")
                 col_live_p, col_live_c = st.columns(2)
                 col_live_p.metric(label="Anlık Fiyat (USDT)", value=f"${current_price:,.2f}")
                 col_live_c.metric(label="24 Saatlik Değişim", value=f"{price_change_24h:+.2f}%")
