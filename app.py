@@ -42,7 +42,7 @@ plt.style.use('dark_background')
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
 supabase_url = "https://ahnwbxfghccotwnlhzgl.supabase.co"
-supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFobndieGZnaGNjb3R3bmxoemdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwMTI3NzcsImV4cCI6MjA5NzU4ODc3N30.9cR5NBti19ddH7UivdcikYFoCRwk42mIkOkElYqT2Oc"
+supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFobndieFfnaGNjb3R3bmxoemdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwMTI3NzcsImV4cCI6MjA5NzU4ODc3N30.9cR5NBti19ddH7UivdcikYFoCRwk42mIkOkElYqT2Oc"
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # ================= MATEMATİKSEL VE YARDIMCI FONKSİYONLAR =================
@@ -379,7 +379,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
             # =================== 4. NATIVE VERİ SORGULAMALARI (120 MUM TAMPONLU) ===================
-            # Grafik sekmelerinin hata vermemesi için standart 3.0 sapma bantları her dataframe'e işlenir.
             raw_1m = exchange.fetch_ohlcv(selected_symbol, "1m", limit=120)
             df_1m = pd.DataFrame(raw_1m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
             df_1m["Zaman"] = pd.to_datetime(df_1m["Zaman"], unit="ms")
@@ -419,43 +418,30 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
             extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
 
-            # =================== 5. TEK BİR ZAMAN DİLİMİ ÜZERİNDEN GENİŞLEYEN DCA HİYERARŞİSİ ===================
-            if not is_volatile:
-                # Sakin Piyasa: 5m mumu üzerinden genişleyen K1, K2, K3
-                df_active = df_5m.copy()
-                df_active = calculate_nw_bands(df_active, 3.0 * 0.70, "_K1")
-                df_active = calculate_nw_bands(df_active, 3.0 * 0.85, "_K2")
-                df_active = calculate_nw_bands(df_active, 3.0 * 1.00, "_K3")
-                
-                dyn_alt_5m = df_active.iloc[-2]["NW_Alt_K1"]
-                dyn_alt_1h = df_active.iloc[-2]["NW_Alt_K2"]
-                dyn_alt_4h = df_active.iloc[-2]["NW_Alt_K3"]
-                
-                dyn_ust_5m = df_active.iloc[-2]["NW_Ust_K1"]
-                dyn_ust_1h = df_active.iloc[-2]["NW_Ust_K2"]
-                dyn_ust_4h = df_active.iloc[-2]["NW_Ust_K3"]
-                
-                l1_lbl, l2_lbl, l3_lbl = "Kademe 1 (5m - K1)", "Kademe 2 (5m - K2)", "Kademe 3 (5m - K3)"
-                s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (5m - K1)", "Kademe 2 (5m - K2)", "Kademe 3 (5m - K3)"
-                active_engine_name = "⏱️ SİSTEM A: SCALP (5m - Genişleyen Bantlar)"
-            else:
-                # Volatil Piyasa: 1h mumu üzerinden genişleyen K1, K2, K3
-                df_active = df_1h.copy()
-                df_active = calculate_nw_bands(df_active, 3.0 * 0.70, "_K1")
-                df_active = calculate_nw_bands(df_active, 3.0 * 0.85, "_K2")
-                df_active = calculate_nw_bands(df_active, 3.0 * 1.00, "_K3")
-                
-                dyn_alt_5m = df_active.iloc[-2]["NW_Alt_K1"]
-                dyn_alt_1h = df_active.iloc[-2]["NW_Alt_K2"]
-                dyn_alt_4h = df_active.iloc[-2]["NW_Alt_K3"]
-                
-                dyn_ust_5m = df_active.iloc[-2]["NW_Ust_K1"]
-                dyn_ust_1h = df_active.iloc[-2]["NW_Ust_K2"]
-                dyn_ust_4h = df_active.iloc[-2]["NW_Ust_K3"]
-                
-                l1_lbl, l2_lbl, l3_lbl = "Kademe 1 (1h - K1)", "Kademe 2 (1h - K2)", "Kademe 3 (1h - K3)"
-                s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (1h - K1)", "Kademe 2 (1h - K2)", "Kademe 3 (1h - K3)"
-                active_engine_name = "🌎 SİSTEM B: MAKRO (1h - Genişleyen Bantlar)"
+            # =================== 5. SABİT HİYERARŞİ HESAPLAMASI (5m / 1h / 4h) ===================
+            # Kademeleriniz tamamen istekleriniz doğrultusunda 5m, 1h ve 4h olarak hesaplanır.
+            raw_k1_alt = df_5m.iloc[-2]["NW_Alt_5m"]
+            raw_k2_alt = df_1h.iloc[-2]["NW_Alt_1h"]
+            raw_k3_alt = df_4h.iloc[-2]["NW_Alt_4h"]
+
+            raw_k1_ust = df_5m.iloc[-2]["NW_Ust_5m"]
+            raw_k2_ust = df_1h.iloc[-2]["NW_Ust_1h"]
+            raw_k3_ust = df_4h.iloc[-2]["NW_Ust_4h"]
+
+            # --- Matematiksel Sıralama Koruması (Sorting Guard) ---
+            # LONG Seviyeleri (Her zaman K1 > K2 > K3 olmalıdır)
+            dyn_alt_5m = raw_k1_alt
+            dyn_alt_1h = min(raw_k2_alt, dyn_alt_5m * 0.997)  # K2, K1'den en az %0.3 daha ucuz olmaya zorlanır.
+            dyn_alt_4h = min(raw_k3_alt, dyn_alt_1h * 0.997)  # K3, K2'den en az %0.3 daha ucuz olmaya zorlanır.
+
+            # SHORT Seviyeleri (Her zaman K1 < K2 < K3 olmalıdır)
+            dyn_ust_5m = raw_k1_ust
+            dyn_ust_1h = max(raw_k2_ust, dyn_ust_5m * 1.003)  # K2, K1'den en az %0.3 daha pahalı olmaya zorlanır.
+            dyn_ust_4h = max(raw_k3_ust, dyn_ust_1h * 1.003)  # K3, K2'den en az %0.3 daha pahalı olmaya zorlanır.
+
+            l1_lbl, l2_lbl, l3_lbl = "Kademe 1 (5m)", "Kademe 2 (1h)", "Kademe 3 (4h)"
+            s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (5m)", "Kademe 2 (1h)", "Kademe 3 (4h)"
+            active_engine_name = "⏱️ SABİT MOTOR (5m / 1h / 4h Hiyerarşisi)"
 
             if manual_lock:
                 if st.session_state[f"{state_prefix}locked_prices"] is None:
