@@ -6,6 +6,32 @@ import time
 import requests
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from supabase import create_client, Client
+
+# ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
+def check_password():
+    """Doğru şifre girilmeden hiçbir veritabanı veya borsa verisi yüklenmez."""
+    if "password_correct" not in st.session_state:
+        st.session_state.password_correct = False
+    
+    if st.session_state.password_correct:
+        return True
+        
+    st.markdown("<h2 style='text-align: center; color: white; margin-top: 50px;'>🔒 DCA Terminal Güvenlik Girişi</h2>", unsafe_allow_html=True)
+    col_login, _ = st.columns([1, 1.5])
+    with col_login:
+        user_password = st.text_input("Lütfen şahsi siber güvenlik şifrenizi girin:", type="password")
+        if st.button("Giriş Yap"):
+            if user_password == "dca2026": 
+                st.session_state.password_correct = True
+                st.rerun()
+            else:
+                st.error("❌ Hatalı Şifre! Erişim reddedildi.")
+    return False
+
+if not check_password():
+    st.stop()  # Şifre yanlışsa kodun geri kalanının çalışmasını durdurur
+# =========================================================================
 
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
@@ -13,10 +39,17 @@ st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 # Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz
 plt.style.use('dark_background')
 
-# ================= ENTEGRE EDİLMİŞ TELEGRAM AYARLARINIZ =================
+# ================= ENTEGRE EDİLMİŞ TELEGRAM VE VERİTABANI AYARLARINIZ =================
+# Talebiniz doğrultusunda kanal adınız @kyounkripto olarak kalıcı olarak kodlanmıştır
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
-telegram_chat_id = "665969213"
-# =========================================================================
+telegram_chat_id = "@kyounkripto"
+
+supabase_url = "https://ahnwbxfghccotwnlhzgl.supabase.co"
+supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFobndieGZnaGNjb3R3bmxoemdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwMTI3NzcsImV4cCI6MjA5NzU4ODc3N30.9cR5NBti19ddH7UivdcikYFoCRwk42mIkOkElYqT2Oc"
+
+# Bulut veritabanı istemcisini başlatıyoruz
+supabase: Client = create_client(supabase_url, supabase_key)
+# ======================================================================================
 
 # GATE.IO FUTURES BAĞLANTISI (Vadeli Modu Aktif)
 exchange = ccxt.gate({
@@ -25,7 +58,7 @@ exchange = ccxt.gate({
     }
 })
 
-# ================= MATEMATİKSEL RSI IRAKSAMA TESPİT ALGORİTMASI =================
+# ================= MATEMATİKSEL RSI IRAKSAMA (DIVERGENCE) TESPİT ALGORİTMASI =================
 def detect_rsi_divergence(closes, rsis):
     if len(closes) < 15 or len(rsis) < 15:
         return False, False
@@ -161,8 +194,26 @@ st.sidebar.markdown("---")
 st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
 countdown_placeholder = st.sidebar.progress(0)
 
-# Seçilen coinin durum değişkenleri (Her coin için bağımsız session_state saklanır)
+# ================= VERİTABANINDAN DURUMU GERİ YÜKLEME (RESTORE) =================
 state_prefix = f"{selected_symbol}_"
+
+try:
+    db_query = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).execute()
+    if db_query.data:
+        db_data = db_query.data[0]
+        st.session_state[f"{state_prefix}balance_usd"] = db_data["balance_usd"]
+        st.session_state[f"{state_prefix}l_status"] = [db_data["l_status_0"], db_data["l_status_1"], db_data["l_status_2"]]
+        st.session_state[f"{state_prefix}l_crypto"] = db_data["l_crypto"]
+        st.session_state[f"{state_prefix}l_usd_spent"] = db_data["l_usd_spent"]
+        st.session_state[f"{state_prefix}l_avg_price"] = db_data["l_avg_price"]
+        st.session_state[f"{state_prefix}s_status"] = [db_data["s_status_0"], db_data["s_status_1"], db_data["s_status_2"]]
+        st.session_state[f"{state_prefix}s_crypto"] = db_data["s_crypto"]
+        st.session_state[f"{state_prefix}s_usd_spent"] = db_data["s_usd_spent"]
+        st.session_state[f"{state_prefix}s_avg_price"] = db_data["s_avg_price"]
+        st.session_state[f"{state_prefix}log_history"] = db_data["log_history"] or []
+except:
+    pass
+
 if f"{state_prefix}balance_usd" not in st.session_state:
     st.session_state[f"{state_prefix}balance_usd"] = 100.0
     st.session_state[f"{state_prefix}initial_balance"] = 100.0
@@ -175,6 +226,31 @@ if f"{state_prefix}balance_usd" not in st.session_state:
     st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
     st.session_state[f"{state_prefix}s_avg_price"] = 0.0
     st.session_state[f"{state_prefix}log_history"] = []
+
+def save_state_to_db():
+    try:
+        data = {
+            "coin_symbol": selected_symbol,
+            "balance_usd": st.session_state[f"{state_prefix}balance_usd"],
+            "l_status_0": st.session_state[f"{state_prefix}l_status"][0],
+            "l_status_1": st.session_state[f"{state_prefix}l_status"][1],
+            "l_status_2": st.session_state[f"{state_prefix}l_status"][2],
+            "l_crypto": st.session_state[f"{state_prefix}l_crypto"],
+            "l_usd_spent": st.session_state[f"{state_prefix}l_usd_spent"],
+            "l_avg_price": st.session_state[f"{state_prefix}l_avg_price"],
+            "s_status_0": st.session_state[f"{state_prefix}s_status"][0],
+            "s_status_1": st.session_state[f"{state_prefix}s_status"][1],
+            "s_status_2": st.session_state[f"{state_prefix}s_status"][2],
+            "s_crypto": st.session_state[f"{state_prefix}s_crypto"],
+            "s_usd_spent": st.session_state[f"{state_prefix}s_usd_spent"],
+            "s_avg_price": st.session_state[f"{state_prefix}s_avg_price"],
+            "log_history": st.session_state[f"{state_prefix}log_history"]
+        }
+        supabase.table("bot_state").upsert(data).execute()
+    except Exception as e:
+        st.sidebar.error(f"Veritabanı kaydı başarısız: {e}")
+
+# ===============================================================================
 
 # Seçilen coinin fiyatına göre kademe adetlerini dinamik ölçeklendiriyoruz
 try:
@@ -249,6 +325,7 @@ while True:
         # 1h resample ve NW hesaplama (Sapma: 3.0)
         df_1h = df.resample("60min", on="Zaman").last().ffill().reset_index()
         df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
+        # 1h RSI hesaplama
         diff_1h = df_1h["Kapanis"].diff()
         up_1h = diff_1h.clip(lower=0)
         down_1h = -diff_1h.clip(upper=0)
@@ -261,7 +338,15 @@ while True:
         # 4h resample ve NW hesaplama (Sapma: 3.0)
         df_4h_res = df.resample("240min", on="Zaman").last().ffill().reset_index()
         df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
-        df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h"]].sort_values("Zaman"), on="Zaman", direction="backward")
+        # 4h RSI hesaplama
+        diff_4h = df_4h_res["Kapanis"].diff()
+        up_4h = diff_4h.clip(lower=0)
+        down_4h = -diff_4h.clip(upper=0)
+        ma_up_4h = up_4h.rolling(14).mean()
+        ma_down_4h = down_4h.rolling(14).mean()
+        rs_4h = ma_up_4h / ma_down_4h
+        df_4h_res["RSI_14"] = 100 - (100 / (1 + rs_4h))
+        df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h", "RSI_14"]].sort_values("Zaman"), on="Zaman", direction="backward", suffixes=('', '_4h'))
 
         # 1 günlük (1d) grafik için veri çekme
         raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=100)
@@ -280,9 +365,12 @@ while True:
         
         rsi_5m = latest_row["RSI_14"]
         rsi_1h = latest_row["RSI_14_1h"] if "RSI_14_1h" in latest_row else 50.0
+        rsi_4h = latest_row["RSI_14_4h"] if "RSI_14_4h" in latest_row else 50.0
 
-        # Canlı Iraksama Analizini Yapıyoruz
+        # Canlı Iraksama Analizini Yapıyoruz (TÜM ZAMAN DİLİMLERİ İÇİN AKTİFLEŞTİRİLDİ)
         bull_div_5m, bear_div_5m = detect_rsi_divergence(df["Kapanis"].values, df["RSI_14"].values)
+        bull_div_1h, bear_div_1h = detect_rsi_divergence(df_1h["Kapanis"].values, df_1h["RSI_14"].values)
+        bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h_res["Kapanis"].values, df_4h_res["RSI_14"].values)
 
         # =================== LONG POZİSYON ÇIKIŞLARI ===================
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
@@ -300,16 +388,18 @@ while True:
                     st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
                     st.session_state[f"{state_prefix}l_avg_price"] = 0.0
                     st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                    save_state_to_db()
 
             elif current_price >= l_tp:
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
+                msg = f"🟢 *LONG ORTAK KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"] = 0.0
                 st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
                 st.session_state[f"{state_prefix}l_avg_price"] = 0.0
                 st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                save_state_to_db()
 
         # =================== SHORT POZİSYON ÇIKIŞLARI ===================
         if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
@@ -326,6 +416,7 @@ while True:
                 st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
                 st.session_state[f"{state_prefix}s_avg_price"] = 0.0
                 st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                save_state_to_db()
 
             elif current_price <= s_tp:
                 pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
@@ -337,6 +428,7 @@ while True:
                 st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
                 st.session_state[f"{state_prefix}s_avg_price"] = 0.0
                 st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                save_state_to_db()
 
         # =================== LONG GİRİŞLERİ ===================
         if current_price <= nw_alt_5m and not st.session_state[f"{state_prefix}l_status"][0]:
@@ -349,6 +441,7 @@ while True:
             msg = f"📈 *LONG K1 SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
+            save_state_to_db()
 
         if current_price <= nw_alt_1h and not st.session_state[f"{state_prefix}l_status"][1]:
             buy_amt = layer_sizes[1]
@@ -360,6 +453,7 @@ while True:
             msg = f"📈 *LONG K2 SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
+            save_state_to_db()
 
         if current_price <= nw_alt_4h and not st.session_state[f"{state_prefix}l_status"][2]:
             buy_amt = layer_sizes[2]
@@ -371,6 +465,7 @@ while True:
             msg = f"📈 *LONG K3 SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
+            save_state_to_db()
 
         # =================== SHORT GİRİŞLERİ ===================
         if current_price >= nw_ust_5m and not st.session_state[f"{state_prefix}s_status"][0]:
@@ -383,6 +478,7 @@ while True:
             msg = f"📉 *SHORT K1 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
+            save_state_to_db()
 
         if current_price >= nw_ust_1h and not st.session_state[f"{state_prefix}s_status"][1]:
             sell_amt = layer_sizes[1]
@@ -394,6 +490,7 @@ while True:
             msg = f"📉 *SHORT K2 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
+            save_state_to_db()
 
         if current_price >= nw_ust_4h and not st.session_state[f"{state_prefix}s_status"][2]:
             sell_amt = layer_sizes[2]
@@ -405,6 +502,7 @@ while True:
             msg = f"📉 *SHORT K3 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
+            save_state_to_db()
 
         # =================== EKRAN GÜNCELLEMELERİ (WEB UI - PRO GRID TASARIM) ===================
         with main_container.container():
@@ -502,13 +600,42 @@ while True:
                 else:
                     col_t2.error(f"🛡️ Emniyet: {warning_msg}")
                 
-                # RSI & Iraksama Kartı
+                # RSI & Iraksama Kartı (HACİM/ZAMAN DİLİMLERİ İÇİN IRAKSAMALAR GÖRSELLEŞTİRİLDİ)
                 st.markdown("---")
-                st.write("⚡ **RSI & Momentum Süzgeci**")
-                rsi_5m_state = f"{rsi_5m:.1f} (AŞIRI SATIM 🟢)" if rsi_5m < 30 else (f"{rsi_5m:.1f} (AŞIRI ALIM 🔴)" if rsi_5m > 70 else f"{rsi_5m:.1f} (NÖTR ⚪)")
-                div_5m_state = "📈 BOĞA IRAKSAMASI!" if bull_div_5m else ("📉 AYI IRAKSAMASI!" if bear_div_5m else "Yok")
-                st.metric(label="5m Anlık RSI Gücü", value=rsi_5m_state, delta=div_5m_state, delta_color="normal" if "VAR" in div_5m_state else "off")
-                st.write(f"**1h RSI Değeri:** {rsi_1h:.1f} (NÖTR ⚪)")
+                st.write("⚡ **RSI & Momentum Sinyal Güç Süzgeci**")
+                col_r1, col_r2, col_r3 = st.columns(3)
+                
+                with col_r1:
+                    st.write("**⏱️ 5m (Skalp)**")
+                    rsi_5m_state = f"{rsi_5m:.1f} (UCUZ 🟢)" if rsi_5m < 30 else (f"{rsi_5m:.1f} (PAHALI 🔴)" if rsi_5m > 70 else f"{rsi_5m:.1f} (NÖTR)")
+                    st.write(rsi_5m_state)
+                    if bull_div_5m:
+                        st.success("📈 BOĞA IRAKSAMASI!")
+                    elif bear_div_5m:
+                        st.error("📉 AYI IRAKSAMASI!")
+                    else:
+                        st.write("Iraksama: *Yok*")
+                        
+                with col_r2:
+                    st.write("**⏱️ 1h (Orta)**")
+                    rsi_1h_state = f"{rsi_1h:.1f} (UCUZ 🟢)" if rsi_1h < 30 else (f"{rsi_1h:.1f} (PAHALI 🔴)" if rsi_1h > 70 else f"{rsi_1h:.1f} (NÖTR)")
+                    st.write(rsi_1h_state)
+                    if bull_div_1h:
+                        st.success("📈 BOĞA IRAKSAMASI!")
+                    elif bear_div_1h:
+                        st.error("📉 AYI IRAKSAMASI!")
+                    else:
+                        st.write("Iraksama: *Yok*")
+                        
+                with col_r3:
+                    st.write("**🌎 4h (Makro)**")
+                    st.write("50.0 (NÖTR)")
+                    if bull_div_4h:
+                        st.success("📈 BOĞA IRAKSAMASI!")
+                    elif bear_div_4h:
+                        st.error("📉 AYI IRAKSAMASI!")
+                    else:
+                        st.write("Iraksama: *Yok*")
                 
                 # DCA Sinyal Takip ve Yönetim Kartı
                 st.markdown("---")
@@ -517,8 +644,8 @@ while True:
                 
                 with col_l:
                     st.info("📈 LONG KADEMELERİ")
-                    k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f})" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_5m:.2f} | {layer_sizes[0]:.4f} BTC)"
-                    k2_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][1] else f"⏳ Bekliyor ({nw_alt_1h:.2f} | {layer_sizes[1]:.4f} BTC)"
+                    k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f} USDT)" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_5m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
+                    k2_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][1] else f"⏳ Bekliyor ({nw_alt_1h:.2f} | {layer_sizes[1]:.4f} {selected_symbol.split('/')[0]})"
                     k3_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_4h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
                     st.write(f"**K1 (5m):** {k1_status}")
                     st.write(f"**K2 (1h):** {k2_status}")
@@ -532,8 +659,8 @@ while True:
 
                 with col_s:
                     st.error("📉 SHORT KADEMELERİ")
-                    s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_avg_price']:.2f})" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_5m:.2f} | {layer_sizes[0]:.4f} BTC)"
-                    s_k2_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][1] else f"⏳ Bekliyor ({nw_ust_1h:.2f} | {layer_sizes[1]:.4f} BTC)"
+                    s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_avg_price']:.2f} USDT)" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_5m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
+                    s_k2_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][1] else f"⏳ Bekliyor ({nw_ust_1h:.2f} | {layer_sizes[1]:.4f} {selected_symbol.split('/')[0]})"
                     s_k3_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_4h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
                     st.write(f"**K1 (5m):** {s_k1_status}")
                     st.write(f"**K2 (1h):** {s_k2_status}")
