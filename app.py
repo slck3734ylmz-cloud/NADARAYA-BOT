@@ -156,7 +156,7 @@ def get_market_movers_and_funding():
                     base_vol = ticker.get('baseVolume') or 0.0
                     volume = base_vol * price
                 
-                # 2. Fonlama Oranı Verisi (Hata düzeltildi, tüm gereksiz kod kalıntıları silindi)
+                # 2. Fonlama Oranı Verisi
                 raw_info = ticker.get('info', {})
                 funding_val = raw_info.get('funding_rate')
                 fr_val = float(funding_val) * 100.0 if funding_val is not None else 0.0
@@ -269,12 +269,12 @@ st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
 selected_display = st.sidebar.selectbox("🔥 Vadeli Coin Seçin (Hacim Sıralı 50)", display_options)
 selected_symbol = [item['symbol'] for item in top_50_data if item['display'] == selected_display][0]
 
-# ================= SOL PANEL (SIDEBAR) FONLAMA ORANLARI YAZDIRMA (BUG DÜZELTİLDİ) =================
+# ================= SOL PANEL (SIDEBAR) FONLAMA ORANLARI YAZDIRMA =================
 st.sidebar.markdown("---")
 st.sidebar.subheader("💸 En Ekstrem Fonlama Oranları (Top 5)")
-# BUG FIX: extreme_rates_sb kaldırıldı, en yukarıda tek seferde çekilmiş olan 'extreme_rates' doğrudan kullanıldı
-if extreme_rates:
-    for item in extreme_rates:
+extreme_rates_sb = get_extreme_funding_rates()
+if extreme_rates_sb:
+    for item in extreme_rates_sb:
         rate_str = f"{item['rate']:+.4f}%"
         if item['rate'] < 0:
             st.sidebar.markdown(f"**{item['symbol']}**: :green[{rate_str}]")
@@ -393,7 +393,17 @@ main_container = st.empty()
 # Canlı Taramayı Başlat
 while True:
     try:
-        # 1. ANLIK VOLATİLİTE ÖLÇÜMÜ (Tansiyon Algoritması)
+        # =================== 1. HATA GEÇİRMEZ KÜRESEL 4H TREND HESAPLAMASI (HER İKİ MOD İÇİN ORTAK) ===================
+        raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=210)
+        df_4h = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_4h["EMA_200"] = df_4h["Kapanis"].ewm(span=200, adjust=False).mean()
+        
+        latest_4h_close = df_4h.iloc[-1]["Kapanis"]
+        latest_4h_ema = df_4h.iloc[-1]["EMA_200"]
+        trend_4h = "YUKARI (BOĞA)" if latest_4h_close > latest_4h_ema else "AŞAĞI (AYI)"
+        warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
+
+        # 2. ANLIK VOLATİLİTE ÖLÇÜMÜ (Tansiyon Algoritması)
         raw_vol = exchange.fetch_ohlcv(selected_symbol, "15m", limit=120)
         df_vol = pd.DataFrame(raw_vol, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_vol["std"] = df_vol["Kapanis"].rolling(20).std()
@@ -405,7 +415,7 @@ while True:
         is_volatile = current_std > historical_median_std
         market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
-        # 2. SEÇİLEN KODA GÖRE CANLI VERİLERİ VE RESAMPLE DİLİMLERİNİ HESAPLA
+        # 3. SEÇİLEN KODA GÖRE CANLI VERİLERİ VE RESAMPLE DİLİMLERİNİ HESAPLA
         if not is_volatile:
             # SAKİN PİYASA (Sistem A: 1m / 5m / 15m) -> 1m master veri çekilir
             raw_candles = exchange.fetch_ohlcv(selected_symbol, "1m", limit=1000)
@@ -413,7 +423,7 @@ while True:
             df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
             
             # K1 (1m), K2 (5m), K3 (15m) NW Hesaplamaları (Birebir 3.0 Std)
-            df = calculate_nw_bands(df, 3.0, "_5m")
+            df = calculate_nw_bands(df, 3.0, "_5m") # 1m master olduğu için sütun adları uyumluluğu
             df_1h = df.resample("5min", on="Zaman").last().ffill().reset_index()
             df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
             df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h"]].sort_values("Zaman"), on="Zaman", direction="backward")
@@ -461,7 +471,8 @@ while True:
             df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
             diff_4h = df_4h_res["Kapanis"].diff()
             up_4h = diff_4h.clip(lower=0)
-            down_4h = -diff_4h.clip(upper=0)  # BUG FIX: down_4h limit süzgeci düzeltildi
+            # BUG FIX: 4h RSI matematiksel sapması giderildi (.clip eklendi)
+            down_4h = -diff_4h.clip(upper=0)
             ma_up_4h = up_4h.rolling(14).mean()
             ma_down_4h = down_4h.rolling(14).mean()
             rs_4h = ma_up_4h / ma_down_4h
@@ -489,14 +500,14 @@ while True:
         nw_ust_1h = latest_row["NW_Ust_1h"]
         nw_ust_4h = latest_row["NW_Ust_4h"]
         
-        rsi_5m = latest_row["RSI_14"]
+        rsi_5m = latest_row["RSI_14"] if "RSI_14" in latest_row else 50.0
         rsi_1h = latest_row["RSI_14_1h"] if "RSI_14_1h" in latest_row else 50.0
         rsi_4h = latest_row["RSI_14_4h"] if "RSI_14_4h" in latest_row else 50.0
 
         # Canlı Iraksama Analizini Yapıyoruz
-        bull_div_5m, bear_div_5m = detect_rsi_divergence(df["Kapanis"].values, df["RSI_14"].values)
-        bull_div_1h, bear_div_1h = detect_rsi_divergence(df_1h["Kapanis"].values, df_1h["RSI_14_1h"].values)
-        bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h_res["Kapanis"].values, df_4h_res["RSI_14_4h"].values)
+        bull_div_5m, bear_div_5m = detect_rsi_divergence(df["Kapanis"].values, df["RSI_14"].values) if "RSI_14" in df else (False, False)
+        bull_div_1h, bear_div_1h = detect_rsi_divergence(df_1h["Kapanis"].values, df_1h["RSI_14_1h"].values) if "RSI_14_1h" in df_1h else (False, False)
+        bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h_res["Kapanis"].values, df_4h_res["RSI_14_4h"].values) if "RSI_14_4h" in df_4h_res else (False, False)
 
         # =================== LONG POZİSYON ÇIKIŞLARI ===================
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
@@ -723,14 +734,14 @@ while True:
                     if not df_long_liq.empty:
                         st.table(df_long_liq.reset_index(drop=True))
                     else:
-                        st.write("Veriler yükleniyor...")
+                        st.write("Likidasyon verileri yükleniyor...")
                         
                 with col_liq_s:
                     st.error("🟢 SHORT LİKİDASYON HAVUZLARI")
                     if not df_short_liq.empty:
                         st.table(df_short_liq.reset_index(drop=True))
                     else:
-                        st.write("Veriler yükleniyor...")
+                        st.write("Likidasyon verileri yükleniyor...")
 
             # --- SAĞ SÜTUN (KONTROL MASASI VE GÖSTERGELER) ---
             with col_right:
