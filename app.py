@@ -15,18 +15,19 @@ telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "665969213"
 # =========================================================================
 
-exchange = ccxt.kraken()
+# BINANCE FUTURES (USDT-M) BAĞLANTISI (Kraken yerine Binance Vadeli İşlemlere geçtik)
+exchange = ccxt.binanceusdm()
 
-# ================= EN YÜKSEK HACİMLİ 50 COİN TARAYICI FONKSİYONU =================
-@st.cache_data(ttl=300)  # Borsayı yormamak için listeyi 5 dakikada bir günceller
+# ================= BİNANCE FUTURES EN YÜKSEK HACİMLİ 50 PERPETUAL TARAYICI =================
+@st.cache_data(ttl=300)  # Listeyi 5 dakikada bir günceller
 def get_top_50_volume_coins():
     try:
         tickers = exchange.fetch_tickers()
         usd_tickers = []
         for symbol, ticker in tickers.items():
-            # Sadece USD çiftlerini al ve stabil coinleri (USDT, USDC) ele
-            if symbol.endswith('/USD') and not any(stable in symbol for sampler, stable in enumerate(['USDT', 'USDC', 'EUR', 'GBP'])):
-                volume = ticker.get('quoteVolume') or (ticker.get('baseVolume', 0) * ticker.get('last', 0))
+            # Sadece USDT teminatlı Sürekli Vadeli (Perpetual - .P) kontratları filtrele
+            if symbol.endswith(':USDT'):
+                volume = ticker.get('quoteVolume', 0)  # USDT bazında 24 saatlik hacim
                 if volume > 0:
                     usd_tickers.append({'symbol': symbol, 'volume': volume})
         
@@ -35,19 +36,19 @@ def get_top_50_volume_coins():
         top_50 = [item['symbol'] for item in usd_tickers[:50]]
         return top_50
     except Exception as e:
-        # Hata durumunda varsayılan güvenli listeyi döndürür
-        return ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "ADA/USD", "DOGE/USD"]
-# =================================================================================
+        # Hata durumunda varsayılan sürekli vadeli listeyi döndürür
+        return ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "DOGE/USDT:USDT"]
+# ==========================================================================================
 
-# En yüksek hacimli 50 coini çekiyoruz
+# En yüksek hacimli 50 vadeli coini çekiyoruz
 top_50_coins = get_top_50_volume_coins()
 
 # Streamlit Yan Panel (Sidebar) Tasarımı
 st.sidebar.title("💳 Cüzdan Durumu")
 st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
 
-# COİN SEÇİM KUTUSU (Hacme göre sıralı 50 coin)
-selected_symbol = st.sidebar.selectbox("🔥 İşlem Yapılacak Coini Seçin (Top 50)", top_50_coins)
+# COİN SEÇİM KUTUSU (Binance Vadeli İşlemler Hacim Sıralı 50 Sürekli Kontrat)
+selected_symbol = st.sidebar.selectbox("🔥 İşlem Yapılacak Vadeli Coin (Top 50)", top_50_coins)
 
 # Seçilen coinin durum değişkenleri (Her coin için bağımsız session_state saklanır)
 state_prefix = f"{selected_symbol}_"
@@ -65,11 +66,9 @@ if f"{state_prefix}balance_usd" not in st.session_state:
     st.session_state[f"{state_prefix}log_history"] = []
 
 # Seçilen coinin fiyatına göre kademe adetlerini dinamik ölçeklendiriyoruz
-# (Örn: Fiyatı ucuz olan bir coinden daha fazla adet alabilmek için)
 try:
     ticker_info = exchange.fetch_ticker(selected_symbol)
     coin_price = ticker_info['last']
-    # Bitcoin için belirlediğimiz 100 USD bütçeli adet oranlarını (1:2:12) seçilen coinin fiyatına göre ölçekliyoruz
     scale_factor = 63000.0 / coin_price
     layer_sizes = [0.0001 * scale_factor, 0.0002 * scale_factor, 0.0012 * scale_factor]
 except:
@@ -117,7 +116,7 @@ log_placeholder = st.empty()
 # Canlı Taramayı Başlat
 while True:
     try:
-        # 1. Seçilen Coin İçin Trend Hesaplama (4H)
+        # 1. Seçilen Vadeli Coin İçin Trend Hesaplama (4H)
         raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=210)
         df_4h = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_4h["EMA_200"] = df_4h["Kapanis"].ewm(span=200, adjust=False).mean()
@@ -127,7 +126,7 @@ while True:
         trend_4h = "YUKARI (BOĞA)" if latest_4h_close > latest_4h_ema else "AŞAĞI (AYI)"
         warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
 
-        # 2. Seçilen Coin İçin Canlı Verileri Al (Limit 600)
+        # 2. Seçilen Vadeli Coin İçin Canlı Verileri Al (Limit 600)
         raw_candles = exchange.fetch_ohlcv(selected_symbol, "15m", limit=600)
         df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
@@ -157,7 +156,7 @@ while True:
 
             if st.session_state[f"{state_prefix}l_status"][2] and current_price <= l_stop:
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol})*\nSatış: {current_price:.2f}"
+                msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"] = 0.0
@@ -167,7 +166,7 @@ while True:
 
             elif current_price >= l_tp:
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol})*\nSatış: {current_price:.2f}"
+                msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"] = 0.0
@@ -183,7 +182,7 @@ while True:
             if st.session_state[f"{state_prefix}s_status"][2] and current_price >= s_stop:
                 pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
-                msg = f"🔴 *SHORT STOP-LOSS TETİKLENDİ ({selected_symbol})*\nKapanış: {current_price:.2f}"
+                msg = f"🔴 *SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}s_crypto"] = 0.0
@@ -194,7 +193,7 @@ while True:
             elif current_price <= s_tp:
                 pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
-                msg = f"🟢 *SHORT KAR-AL TETİKLENDİ ({selected_symbol})*\nKapanış: {current_price:.2f}"
+                msg = f"🟢 *SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}s_crypto"] = 0.0
@@ -210,7 +209,7 @@ while True:
             st.session_state[f"{state_prefix}l_usd_spent"] += buy_amt * current_price
             st.session_state[f"{state_prefix}l_status"][0] = True
             st.session_state[f"{state_prefix}l_avg_price"] = st.session_state[f"{state_prefix}l_usd_spent"] / st.session_state[f"{state_prefix}l_crypto"]
-            msg = f"📈 *LONG K1 SATIN ALINDI ({selected_symbol})*\nFiyat: {current_price:.2f}"
+            msg = f"📈 *LONG K1 SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
 
@@ -221,7 +220,7 @@ while True:
             st.session_state[f"{state_prefix}l_usd_spent"] += buy_amt * current_price
             st.session_state[f"{state_prefix}l_status"][1] = True
             st.session_state[f"{state_prefix}l_avg_price"] = st.session_state[f"{state_prefix}l_usd_spent"] / st.session_state[f"{state_prefix}l_crypto"]
-            msg = f"📈 *LONG K2 SATIN ALINDI ({selected_symbol})*\nFiyat: {current_price:.2f}"
+            msg = f"📈 *LONG K2 SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
 
@@ -232,7 +231,7 @@ while True:
             st.session_state[f"{state_prefix}l_usd_spent"] += buy_amt * current_price
             st.session_state[f"{state_prefix}l_status"][2] = True
             st.session_state[f"{state_prefix}l_avg_price"] = st.session_state[f"{state_prefix}l_usd_spent"] / st.session_state[f"{state_prefix}l_crypto"]
-            msg = f"📈 *LONG K3 SATIN ALINDI ({selected_symbol})*\nFiyat: {current_price:.2f}"
+            msg = f"📈 *LONG K3 SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
 
@@ -244,7 +243,7 @@ while True:
             st.session_state[f"{state_prefix}s_usd_spent"] += sell_amt * current_price
             st.session_state[f"{state_prefix}s_status"][0] = True
             st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
-            msg = f"📉 *SHORT K1 AÇILDI ({selected_symbol})*\nFiyat: {current_price:.2f}"
+            msg = f"📉 *SHORT K1 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
 
@@ -255,7 +254,7 @@ while True:
             st.session_state[f"{state_prefix}s_usd_spent"] += sell_amt * current_price
             st.session_state[f"{state_prefix}s_status"][1] = True
             st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
-            msg = f"📉 *SHORT K2 AÇILDI ({selected_symbol})*\nFiyat: {current_price:.2f}"
+            msg = f"📉 *SHORT K2 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
 
@@ -266,14 +265,14 @@ while True:
             st.session_state[f"{state_prefix}s_usd_spent"] += sell_amt * current_price
             st.session_state[f"{state_prefix}s_status"][2] = True
             st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
-            msg = f"📉 *SHORT K3 AÇILDI ({selected_symbol})*\nFiyat: {current_price:.2f}"
+            msg = f"📉 *SHORT K3 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
 
         # =================== EKRAN GÜNCELLEMELERİ (WEB UI) ===================
         with title_placeholder.container():
-            st.title(f"📊 {selected_symbol} Çift Yönlü DCA Canlı Takip Paneli")
-            st.write(f"Kraken Anlık Fiyatı: **{current_price:.2f} USD**")
+            st.title(f"📊 {selected_symbol.split(':')[0]} Vadeli DCA Canlı Takip Paneli")
+            st.write(f"Binance Futures Canlı Fiyatı: **{current_price:.2f} USDT**")
 
         with trend_placeholder.container():
             col_t1, col_t2 = st.columns(2)
@@ -292,7 +291,7 @@ while True:
             # --- LONG GRID KARTI ---
             with col_l:
                 st.info("📈 LONG (Boğa) KADEMELERİ")
-                k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f} USD)" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_15m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
+                k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f} USDT)" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_15m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
                 k2_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][1] else f"⏳ Bekliyor ({nw_alt_30m:.2f} | {layer_sizes[1]:.4f} {selected_symbol.split('/')[0]})"
                 k3_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_2h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
                 
@@ -303,16 +302,16 @@ while True:
                 if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                     l_tp = st.session_state[f"{state_prefix}l_avg_price"] * 1.01
                     l_sl = st.session_state[f"{state_prefix}l_avg_price"] * 0.98 if st.session_state[f"{state_prefix}l_status"][2] else "PASİF (3. Kademeden Sonra)"
-                    st.write(f"**Ortalama Giriş Fiyatı:** {st.session_state[f'{state_prefix}l_avg_price']:.2f} USD")
-                    st.write(f"🟢 **Kar-Al Hedefi (%1):** {l_tp:.2f} USD")
-                    st.write(f"🔴 **Stop-Loss (%2):** {f'{l_sl:.2f} USD' if isinstance(l_sl, float) else l_sl}")
+                    st.write(f"**Ortalama Giriş Fiyatı:** {st.session_state[f'{state_prefix}l_avg_price']:.2f} USDT")
+                    st.write(f"🟢 **Kar-Al Hedefi (%1):** {l_tp:.2f} USDT")
+                    st.write(f"🔴 **Stop-Loss (%2):** {f'{l_sl:.2f} USDT' if isinstance(l_sl, float) else l_sl}")
                 else:
                     st.write("*Aktif Long pozisyon bulunmuyor.*")
 
             # --- SHORT GRID KARTI ---
             with col_s:
                 st.error("📉 SHORT (Ayı) KADEMELERİ")
-                s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_avg_price']:.2f} USD)" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_15m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
+                s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_avg_price']:.2f} USDT)" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_15m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
                 s_k2_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][1] else f"⏳ Bekliyor ({nw_ust_30m:.2f} | {layer_sizes[1]:.4f} {selected_symbol.split('/')[0]})"
                 s_k3_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_2h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
                 
@@ -323,9 +322,9 @@ while True:
                 if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                     s_tp = st.session_state[f"{state_prefix}s_avg_price"] * 0.99
                     s_sl = st.session_state[f"{state_prefix}s_avg_price"] * 1.02 if st.session_state[f"{state_prefix}s_status"][2] else "PASİF (3. Kademeden Sonra)"
-                    st.write(f"**Ortalama Giriş Fiyatı:** {st.session_state[f'{state_prefix}s_avg_price']:.2f} USD")
-                    st.write(f"🟢 **Kar-Al Hedefi (%1):** {s_tp:.2f} USD")
-                    st.write(f"🔴 **Stop-Loss (%2):** {f'{s_sl:.2f} USD' if isinstance(s_sl, float) else s_sl}")
+                    st.write(f"**Ortalama Giriş Fiyatı:** {st.session_state[f'{state_prefix}s_avg_price']:.2f} USDT")
+                    st.write(f"🟢 **Kar-Al Hedefi (%1):** {s_tp:.2f} USDT")
+                    st.write(f"🔴 **Stop-Loss (%2):** {f'{s_sl:.2f} USDT' if isinstance(s_sl, float) else s_sl}")
                 else:
                     st.write("*Aktif Short pozisyon bulunmuyor.*")
 
