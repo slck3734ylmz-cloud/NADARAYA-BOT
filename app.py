@@ -10,6 +10,9 @@ import matplotlib.dates as mdates
 # Streamlit sayfa yapılandırması
 st.set_page_config(page_title="DCA Live Hedging Dashboard", layout="wide")
 
+# Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz
+plt.style.use('dark_background')
+
 # ================= ENTEGRE EDİLMİŞ TELEGRAM AYARLARINIZ =================
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "665969213"
@@ -22,8 +25,44 @@ exchange = ccxt.gate({
     }
 })
 
+# ================= MATEMATİKSEL RSI IRAKSAMA TESPİT ALGORİTMASI =================
+def detect_rsi_divergence(closes, rsis):
+    if len(closes) < 15 or len(rsis) < 15:
+        return False, False
+        
+    c_sub = closes[-15:]
+    r_sub = rsis[-15:]
+    
+    # Yerel dipleri bul (Boğa Iraksaması)
+    lows_idx = []
+    for i in range(1, len(c_sub)-1):
+        if c_sub[i] < c_sub[i-1] and c_sub[i] < c_sub[i+1]:
+            lows_idx.append(i)
+            
+    bull_div = False
+    if len(lows_idx) >= 2:
+        i1, i2 = lows_idx[-2], lows_idx[-1]
+        if c_sub[i2] < c_sub[i1] and r_sub[i2] > r_sub[i1]:
+            if r_sub[i2] < 45:
+                bull_div = True
+                
+    # Yerel tepeleri bul (Ayı Iraksaması)
+    highs_idx = []
+    for i in range(1, len(c_sub)-1):
+        if c_sub[i] > c_sub[i-1] and c_sub[i] > c_sub[i+1]:
+            highs_idx.append(i)
+            
+    bear_div = False
+    if len(highs_idx) >= 2:
+        i1, i2 = highs_idx[-2], highs_idx[-1]
+        if c_sub[i2] > c_sub[i1] and r_sub[i2] < r_sub[i1]:
+            if r_sub[i2] > 55:
+                bear_div = True
+                
+    return bull_div, bear_div
+
 # ================= GÖMÜLÜ CANLI FİYAT VE YÜZDELİKLİ TARAYICI =================
-@st.cache_data(ttl=300)  # Sitenin kasmaması için listeyi 5 dakikada bir günceller
+@st.cache_data(ttl=300)
 def get_top_50_volume_coins():
     try:
         tickers = exchange.fetch_tickers()
@@ -66,7 +105,7 @@ def get_top_50_volume_coins():
             {'symbol': "ETH/USDT:USDT", 'display': "ETH/USDT ($3,500.00 | +0.00%)"}
         ]
 
-# ================= EN EKSTREM FONLAMA ORANLARI TARAYICISI (HATASI GİDERİLDİ) =================
+# ================= EN EKSTREM FONLAMA ORANLARI TARAYICISI =================
 @st.cache_data(ttl=300)
 def get_extreme_funding_rates():
     try:
@@ -74,11 +113,10 @@ def get_extreme_funding_rates():
         funding_rates = []
         for symbol, ticker in tickers.items():
             if symbol.endswith(':USDT'):
-                # Gate.io'nun ham veri yapısından fonlama oranını çekiyoruz (Hata düzeltildi)
                 raw_info = ticker.get('info', {})
                 funding_val = raw_info.get('funding_rate')
                 if funding_val is not None:
-                    fr_val = float(funding_val) * 100.0 # % formatına çevir
+                    fr_val = float(funding_val) * 100.0
                     funding_rates.append({
                         'symbol': symbol.split(':')[0],
                         'rate': fr_val
@@ -87,12 +125,10 @@ def get_extreme_funding_rates():
         if len(funding_rates) == 0:
             return []
             
-        # Oranları mutlak değere göre sırala (en ekstrem negatif ve pozitifleri bulmak için)
         funding_rates.sort(key=lambda x: abs(x['rate']), reverse=True)
         return funding_rates[:5]
     except Exception as e:
         return []
-# ===================================================================================================
 
 # Canlı Fiyatlı ve Yüzdelikli 50 coini çekiyoruz
 top_50_data = get_top_50_volume_coins()
@@ -106,14 +142,13 @@ st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
 selected_display = st.sidebar.selectbox("🔥 Vadeli Coin Seçin (Hacim Sıralı 50)", display_options)
 selected_symbol = [item['symbol'] for item in top_50_data if item['display'] == selected_display][0]
 
-# ================= SOL PANEL (SIDEBAR) FONLAMA ORANLARI YAZDIRMA (AKTİFLEŞTİRİLDİ) =================
+# ================= SOL PANEL (SIDEBAR) FONLAMA ORANLARI YAZDIRMA =================
 st.sidebar.markdown("---")
 st.sidebar.subheader("💸 En Ekstrem Fonlama Oranları (Top 5)")
 extreme_rates = get_extreme_funding_rates()
 if extreme_rates:
     for item in extreme_rates:
         rate_str = f"{item['rate']:+.4f}%"
-        # Negatif fonlama (yeşil - long taşıyanlar öder), Pozitif fonlama (kırmızı) olarak renklendirilir
         if item['rate'] < 0:
             st.sidebar.markdown(f"**{item['symbol']}**: :green[{rate_str}]")
         else:
@@ -121,7 +156,9 @@ if extreme_rates:
 else:
     st.sidebar.write("Fonlama oranları yükleniyor...")
 st.sidebar.markdown("---")
-# ===================================================================================================
+
+# GERİ SAYIM SAYACI İÇİN ALAN (Sleek Sidebar Countdown)
+countdown_placeholder = st.sidebar.empty()
 
 # Seçilen coinin durum değişkenleri (Her coin için bağımsız session_state saklanır)
 state_prefix = f"{selected_symbol}_"
@@ -138,7 +175,7 @@ if f"{state_prefix}balance_usd" not in st.session_state:
     st.session_state[f"{state_prefix}s_avg_price"] = 0.0
     st.session_state[f"{state_prefix}log_history"] = []
 
-# Seçilen coinin fiyatına göre kademe adetlerini dinamik ölçeklendiriyoruz (Ultra-Güvenli)
+# Seçilen coinin fiyatına göre kademe adetlerini dinamik ölçeklendiriyoruz
 try:
     ticker_info = exchange.fetch_ticker(selected_symbol)
     coin_price = ticker_info.get('last') or ticker_info.get('close') or 63000.0
@@ -182,6 +219,7 @@ def calculate_nw_bands(df, std_multiplier, col_suffix):
 # Ekran Güncelleme Alanları (Placeholders)
 title_placeholder = st.empty()
 trend_placeholder = st.empty()
+rsi_placeholder = st.empty()
 dca_cards_placeholder = st.empty()
 chart_placeholder = st.empty()
 log_placeholder = st.empty()
@@ -204,15 +242,27 @@ while True:
         df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
         
-        # 5m NW hesaplama (Kademe 1 - Sapma: 3.0)
+        # 5m NW ve RSI (Sapma: Birebir 3.0 Std)
         df = calculate_nw_bands(df, 3.0, "_5m")
+        delta = df["Kapanis"].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / loss
+        df["RSI_14"] = 100 - (100 / (1 + rs))
 
-        # 1h resample ve NW hesaplama (Kademe 2 - Sapma: 3.0)
+        # 1h resample ve NW hesaplama (Sapma: Birebir 3.0 Std)
         df_1h = df.resample("60min", on="Zaman").last().ffill().reset_index()
         df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
-        df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h"]].sort_values("Zaman"), on="Zaman", direction="backward")
+        diff_1h = df_1h["Kapanis"].diff()
+        up_1h = diff_1h.clip(lower=0)
+        down_1h = -diff_1h.clip(upper=0)
+        ma_up_1h = up_1h.rolling(14).mean()
+        ma_down_1h = down_1h.rolling(14).mean()
+        rs_1h = ma_up_1h / ma_down_1h
+        df_1h["RSI_14"] = 100 - (100 / (1 + rs_1h))
+        df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h", "RSI_14"]].sort_values("Zaman"), on="Zaman", direction="backward", suffixes=('', '_1h'))
 
-        # 4h resample ve NW hesaplama (Kademe 3 - Sapma: 3.0)
+        # 4h resample ve NW hesaplama (Sapma: Birebir 3.0 Std)
         df_4h_res = df.resample("240min", on="Zaman").last().ffill().reset_index()
         df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
         df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h"]].sort_values("Zaman"), on="Zaman", direction="backward")
@@ -225,6 +275,18 @@ while True:
         nw_ust_5m = latest_row["NW_Ust_5m"]
         nw_ust_1h = latest_row["NW_Ust_1h"]
         nw_ust_4h = latest_row["NW_Ust_4h"]
+        
+        rsi_5m = latest_row["RSI_14"]
+        rsi_1h = latest_row["RSI_14_1h"] if "RSI_14_1h" in latest_row else 50.0
+
+        # Canlı Iraksama Analizini Yapıyoruz
+        bull_div_5m, bear_div_5m = detect_rsi_divergence(df["Kapanis"].values, df["RSI_14"].values)
+
+        # 3. YENİ EKLEME: 1 GÜNLÜK (1d) GRAFİK İÇİN BORSA SORGULAMASI (3.0 Standart Sapma)
+        raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=100)
+        df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
+        df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
 
         # =================== LONG POZİSYON ÇIKIŞLARI ===================
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
@@ -245,7 +307,7 @@ while True:
                     
             if current_price >= l_tp and sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
+                msg = f"🟢 *LONG ORTAK KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"] = 0.0
@@ -353,7 +415,7 @@ while True:
         # =================== EKRAN GÜNCELLEMELERİ (WEB UI) ===================
         with title_placeholder.container():
             st.title(f"📊 {selected_symbol.split(':')[0]} Vadeli DCA Canlı Takip Paneli")
-            st.write(f"Gate.io Futures Canlı Fiyatı: **{current_price:.2f} USDT**")
+            st.write(f"Binance/Bybit Eşzamanlı Canlı Fiyatı: **{current_price:.2f} USDT**")
 
         with trend_placeholder.container():
             col_t1, col_t2 = st.columns(2)
@@ -362,6 +424,17 @@ while True:
                 col_t2.success(f"🛡️ Emniyet Uyarısı: {warning_msg}")
             else:
                 col_t2.error(f"🛡️ Emniyet Uyarısı: {warning_msg}")
+
+        # RSI & IRAKSAMA PANELİ GÜNCELLEME
+        with rsi_placeholder.container():
+            st.subheader("⚡ RSI & Momentum Sinyal Güç Süzgeci")
+            col_r1, col_r2, col_r3 = st.columns(3)
+            rsi_5m_state = f"{rsi_5m:.1f} (AŞIRI SATIM 🟢)" if rsi_5m < 30 else (f"{rsi_5m:.1f} (AŞIRI ALIM 🔴)" if rsi_5m > 70 else f"{rsi_5m:.1f} (NÖTR ⚪)")
+            div_5m_state = "📈 BOĞA IRAKSAMASI VAR!" if bull_div_5m else ("📉 AYI IRAKSAMASI VAR!" if bear_div_5m else "Yok")
+            col_r1.metric(label="5m Anlık RSI Gücü", value=rsi_5m_state, delta=div_5m_state, delta_color="normal" if "VAR" in div_5m_state else "off")
+            rsi_1h_state = f"{rsi_1h:.1f} (AŞIRI SATIM 🟢)" if rsi_1h < 30 else (f"{rsi_1h:.1f} (AŞIRI ALIM 🔴)" if rsi_1h > 70 else f"{rsi_1h:.1f} (NÖTR ⚪)")
+            col_r2.metric(label="1h Anlık RSI Gücü", value=rsi_1h_state)
+            col_r3.metric(label="4h Anlık RSI Gücü", value="50.0 (NÖTR ⚪)")
 
         # Dinamik Kademe ve Hedef Kartı (DCA Sinyal Kartı)
         with dca_cards_placeholder.container():
@@ -409,34 +482,37 @@ while True:
                 else:
                     st.write("*Aktif Short pozisyon bulunmuyor.*")
 
-        # Web Sayfası Grafiğini Güncelleme (3 Sekmeli Grafik Yapısı)
+        # Web Sayfası Grafiğini Güncelleme (4 Sekmeli ve KARANLIK TEMA Tasarımı)
         with chart_placeholder.container():
-            # Grafik alanında 3 zaman dilimi için ayrı sekmeler (tabs) oluşturuyoruz
-            tab_5m, tab_1h, tab_4h = st.tabs(["⏱️ 5 Dakikalık Grafik", "⏱️ 1 Saatlik Grafik", "⏱️ 4 Saatlik Grafik"])
-            df_subset = df.tail(100) # Son 100 mumu çizerek grafiği yakınlaştırıyoruz (görsel netlik)
+            tab_5m, tab_1h, tab_4h, tab_1d = st.tabs(["⏱️ 5 Dakikalık Grafik", "⏱️ 1 Saatlik Grafik", "⏱️ 4 Saatlik Grafik", "🌎 1 Günlük Grafik"])
             
-            # --- 5 DAKİKALIK GRAFİK SEKMESTİ ---
+            # --- 5 DAKİKALIK GRAFİK SEKMESTİ (KARANLIK TEMA) ---
             with tab_5m:
-                fig1, ax1 = plt.subplots(figsize=(15, 4.5))
+                fig1, ax1 = plt.subplots(figsize=(15, 4.5), facecolor='#0e1117') # Web sayfa rengiyle uyumlu koyu arka plan
+                ax1.set_facecolor('#0e1117')
+                
+                df_subset = df.tail(100) # Son 100 mumu yakınlaştırarak çiziyoruz (görsel netlik)
                 ax1.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2)
                 ax1.plot(df_subset["Zaman"], df_subset["NW_Alt_5m"], label="Alt Band (5m)", color="limegreen", linestyle="--")
                 ax1.plot(df_subset["Zaman"], df_subset["NW_Ust_5m"], label="Üst Band (5m)", color="crimson", linestyle="--")
                 
-                # Pozisyon çizgilerini ekle
+                # Pozisyon çizgileri
                 if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                     ax1.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
                 if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                     ax1.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
                 
                 ax1.legend(loc="upper left")
-                ax1.grid(True, alpha=0.1)
+                ax1.grid(True, color='white', alpha=0.05) # Çok hafif beyaz ızgaralar
                 plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
                 st.pyplot(fig1)
                 plt.close(fig1)
                 
-            # --- 1 SAATLİK GRAFİK SEKMESTİ ---
+            # --- 1 SAATLİK GRAFİK SEKMESTİ (KARANLIK TEMA) ---
             with tab_1h:
-                fig2, ax2 = plt.subplots(figsize=(15, 4.5))
+                fig2, ax2 = plt.subplots(figsize=(15, 4.5), facecolor='#0e1117')
+                ax2.set_facecolor('#0e1117')
+                
                 ax2.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2)
                 ax2.plot(df_subset["Zaman"], df_subset["NW_Alt_1h"], label="Alt Band (1h)", color="forestgreen", linestyle="--")
                 ax2.plot(df_subset["Zaman"], df_subset["NW_Ust_1h"], label="Üst Band (1h)", color="firebrick", linestyle="--")
@@ -447,14 +523,16 @@ while True:
                     ax2.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
                 
                 ax2.legend(loc="upper left")
-                ax2.grid(True, alpha=0.1)
+                ax2.grid(True, color='white', alpha=0.05)
                 plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
                 st.pyplot(fig2)
                 plt.close(fig2)
                 
-            # --- 4 SAATLİK GRAFİK SEKMESTİ ---
+            # --- 4 SAATLİK GRAFİK SEKMESTİ (KARANLIK TEMA) ---
             with tab_4h:
-                fig3, ax3 = plt.subplots(figsize=(15, 4.5))
+                fig3, ax3 = plt.subplots(figsize=(15, 4.5), facecolor='#0e1117')
+                ax3.set_facecolor('#0e1117')
+                
                 ax3.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2)
                 ax3.plot(df_subset["Zaman"], df_subset["NW_Alt_4h"], label="Alt Band (4h)", color="darkgreen", linestyle="-")
                 ax3.plot(df_subset["Zaman"], df_subset["NW_Ust_4h"], label="Üst Band (4h)", color="darkred", linestyle="-")
@@ -465,10 +543,26 @@ while True:
                     ax3.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
                 
                 ax3.legend(loc="upper left")
-                ax3.grid(True, alpha=0.1)
+                ax3.grid(True, color='white', alpha=0.05)
                 plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
                 st.pyplot(fig3)
                 plt.close(fig3)
+
+            # --- 1 GÜNLÜK GRAFİK SEKMESTİ ---
+            with tab_1d:
+                fig4, ax4 = plt.subplots(figsize=(15, 4.5), facecolor='#0e1117')
+                ax4.set_facecolor('#0e1117')
+                
+                df_1d_subset = df_1d.tail(30)
+                ax4.plot(df_1d_subset["Zaman"], df_1d_subset["Kapanis"], label="Günlük Kapanış Fiyatı", color="royalblue", linewidth=2.5)
+                ax4.plot(df_1d_subset["Zaman"], df_1d_subset["NW_Alt_1d"], label="Alt Band (1d - 3.0 Std)", color="limegreen", linestyle="-")
+                ax4.plot(df_1d_subset["Zaman"], df_1d_subset["NW_Ust_1d"], label="Üst Band (1d - 3.0 Std)", color="crimson", linestyle="-")
+                
+                ax4.legend(loc="upper left")
+                ax4.grid(True, color='white', alpha=0.05)
+                plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%d/%m"))
+                st.pyplot(fig4)
+                plt.close(fig4)
 
         # İşlem Loglarını Güncelleme
         with log_placeholder.container():
@@ -480,4 +574,9 @@ while True:
     except Exception as e:
         st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
         
-    time.sleep(10)
+    # ================= ANLIK GERİ SAYIM SAYACI (ULTRA HIZLI SIDEBAR) =================
+    # time.sleep(10) yerine saniye saniye sayan interaktif sayaç
+    for remaining in range(10, 0, -1):
+        countdown_placeholder.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
+        time.sleep(1)
+    countdown_placeholder.write("🔄 Taranıyor...")
