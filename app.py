@@ -35,14 +35,26 @@ if not check_password():
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
-# ================= FLICKER-FREE (KIPIRDAMASIZ) CSS ENJEKSİYONU =================
+# ================= SEAMLESS / FLICKER-FREE (KIPIRDAMASIZ) CSS ENJEKSİYONU =================
 st.markdown(
     """
     <style>
+    /* Yenileme esnasında ana bloğun kararmasını (dimming efekti) kesin olarak engeller */
     div[data-testid="stAppViewBlockContainer"] {
         opacity: 1.0 !important;
         transition: none !important;
     }
+    /* Tüm sayfa arka plan kararmasını engeller */
+    div[data-testid="stAppViewContainer"] {
+        opacity: 1.0 !important;
+        transition: none !important;
+    }
+    /* Streamlit'in yükleniyor durumundaki (data-loading) karartma sınıflarını kilitler */
+    [data-loading="true"] {
+        opacity: 1.0 !important;
+        filter: none !important;
+    }
+    /* Sağ üst köşedeki göz yoran "Running..." (Çalışıyor) simgesini gizler */
     div[data-testid="stStatusWidget"] {
         display: none !important;
         visibility: hidden !important;
@@ -51,6 +63,7 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+# ==========================================================================================
 
 # Telegram ve Supabase Ayarları
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
@@ -560,10 +573,10 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
 
     if st.sidebar.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="live_reset_all_positions_button"):
         st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+        st.session_state[f"{state_prefix}s_status"] = [False, False, False]
         st.session_state[f"{state_prefix}l_crypto"] = 0.0
         st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
         st.session_state[f"{state_prefix}l_avg_price"] = 0.0
-        st.session_state[f"{state_prefix}s_status"] = [False, False, False]
         st.session_state[f"{state_prefix}s_crypto"] = 0.0
         st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
         st.session_state[f"{state_prefix}s_avg_price"] = 0.0
@@ -572,7 +585,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
         save_state_to_db()
         st.rerun()
 
-    # Geri sayım sayacı alanı
     st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
     countdown_placeholder = st.sidebar.empty()
 
@@ -848,6 +860,22 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             if st.session_state[f"{state_prefix}log_history"]:
                 st.write("📜 **Son Sinyaller (Log)**")
                 for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]): st.write(log)
+
+            # SIFIRLAMA BUTONU
+            st.markdown("---")
+            if st.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="reset_all_positions_button"):
+                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                st.session_state[f"{state_prefix}l_crypto"] = 0.0
+                st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
+                st.session_state[f"{state_prefix}l_avg_price"] = 0.0
+                st.session_state[f"{state_prefix}s_crypto"] = 0.0
+                st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
+                st.session_state[f"{state_prefix}s_avg_price"] = 0.0
+                st.session_state[f"{state_prefix}balance_usd"] = 100.0
+                st.session_state[f"{state_prefix}locked_prices"] = None
+                save_state_to_db()
+                st.rerun()
 
     except Exception as e:
         st.sidebar.error(f"Hata oluştu: {e}")
