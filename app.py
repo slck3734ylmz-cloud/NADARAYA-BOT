@@ -758,25 +758,24 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.subheader("📈 Canlı Fiyat ve Nadaraya-Watson Zarf Grafikleri")
                     tab_1m, tab_5m, tab_15m, tab_1h, tab_4h, tab_1d = st.tabs(["⏱️ 1m", "⏱️ 5m", "⏱️ 15m", "⏱️ 1h", "⏱️ 4h", "🌎 1d"])
                     
-                    # HATA GİDERİCİ: Tüm sekmelerin Plotly grafiklerine benzersiz statik key parametreleri eklendi (ID çakışması kesin olarak çözüldü)
                     with tab_1m:
                         df_subset = df_1m.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_1m_uq")
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
                     with tab_5m:
                         df_subset = df_5m.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_5m_uq")
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
                     with tab_15m:
                         df_subset = df_15m.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_15m_uq")
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
                     with tab_1h:
                         df_subset = df_1h.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_1h_uq")
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
                     with tab_4h:
                         df_subset = df_4h.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_4h_uq")
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
                     with tab_1d:
                         df_subset = df_1d.tail(30)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key="live_plotly_1d_uq")
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True)
 
                 st.markdown("---")
                 st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
@@ -858,22 +857,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             if st.session_state[f"{state_prefix}log_history"]:
                 st.write("📜 **Son Sinyaller (Log)**")
                 for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]): st.write(log)
-
-            # SIFIRLAMA BUTONU
-            st.markdown("---")
-            if st.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="reset_all_positions_button"):
-                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
-                st.session_state[f"{state_prefix}s_status"] = [False, False, False]
-                st.session_state[f"{state_prefix}l_crypto"] = 0.0
-                st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
-                st.session_state[f"{state_prefix}l_avg_price"] = 0.0
-                st.session_state[f"{state_prefix}s_crypto"] = 0.0
-                st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
-                st.session_state[f"{state_prefix}s_avg_price"] = 0.0
-                st.session_state[f"{state_prefix}balance_usd"] = 100.0
-                st.session_state[f"{state_prefix}locked_prices"] = None
-                save_state_to_db()
-                st.rerun()
 
         except Exception as e:
             st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
