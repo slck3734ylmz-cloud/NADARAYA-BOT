@@ -522,7 +522,7 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                         height=400,
                         hovermode="x unified"
                     )
-                    st.plotly_chart(fig_bt, use_container_width=True)
+                    st.plotly_chart(fig_bt, use_container_width=True, key="backtest_plotly_equity_chart_unique")
                     
                     st.write("📜 **Gerçekleşen Geçmiş İşlem Detayları**")
                     st.dataframe(df_trades)
@@ -823,40 +823,41 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                         "⏱️ 1m", "⏱️ 5m", "⏱️ 15m", "⏱️ 1h", "⏱️ 4h", "🌎 1d"
                     ])
                     
+                    # HATA GİDERİCİ: Tüm st.plotly_chart() çağrılarına benzersiz "key" parametreleri atandı (ID çakışması çözüldü)
                     with tab_1m:
                         st.plotly_chart(draw_plotly_chart(
                             df_1m.tail(100), "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1 Dakikalık Grafik",
                             st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']
-                        ), use_container_width=True)
+                        ), use_container_width=True, key="live_plotly_chart_1m_unique")
 
                     with tab_5m:
                         st.plotly_chart(draw_plotly_chart(
                             df_5m.tail(100), "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5 Dakikalık Grafik",
                             st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']
-                        ), use_container_width=True)
+                        ), use_container_width=True, key="live_plotly_chart_5m_unique")
 
                     with tab_15m:
                         st.plotly_chart(draw_plotly_chart(
                             df_15m.tail(100), "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15 Dakikalık Grafik",
                             st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']
-                        ), use_container_width=True)
+                        ), use_container_width=True, key="live_plotly_chart_15m_unique")
                         
                     with tab_1h:
                         st.plotly_chart(draw_plotly_chart(
                             df_1h.tail(100), "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1 Saatlik Grafik",
                             st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']
-                        ), use_container_width=True)
+                        ), use_container_width=True, key="live_plotly_chart_1h_unique")
                         
                     with tab_4h:
                         st.plotly_chart(draw_plotly_chart(
                             df_4h.tail(100), "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4 Saatlik Grafik",
                             st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']
-                        ), use_container_width=True)
+                        ), use_container_width=True, key="live_plotly_chart_4h_unique")
                         
                     with tab_1d:
                         st.plotly_chart(draw_plotly_chart(
                             df_1d.tail(30), "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - Günlük Grafik"
-                        ), use_container_width=True)
+                        ), use_container_width=True, key="live_plotly_chart_1d_unique")
 
                     st.markdown("---")
                     st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
@@ -950,22 +951,4 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
                 col_g, col_lo = st.columns(2)
                 with col_g:
-                    st.success("📈 EN ÇOK YÜKSELENLER")
-                    if not df_gainers.empty: st.table(df_gainers.reset_index(drop=True))
-                with col_lo:
-                    st.error("📉 EN ÇOK DÜŞENLER")
-                    if not df_losers.empty: st.table(df_losers.reset_index(drop=True))
-
-                st.markdown("---")
-                if st.session_state[f"{state_prefix}log_history"]:
-                    st.write("📜 **Son Sinyaller (Log)**")
-                    for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
-                        st.write(log)
-
-        except Exception as e:
-            st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
-            
-        for remaining in range(10, 0, -1):
-            countdown_placeholder.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
-            time.sleep(1)
-        countdown_placeholder.write("🔄 Taranıyor...")
+                    st.su
