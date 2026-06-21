@@ -35,6 +35,9 @@ if not check_password():
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
+# Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz
+plt.style.use('dark_background')
+
 # ================= ENTEGRE EDİLMİŞ TELEGRAM VE VERİTABANI AYARLARINIZ =================
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
@@ -763,7 +766,8 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
 
-            if current_price <= nw_alt_4h && not st.session_state[f"{state_prefix}l_status"][2]:
+            # HATA GİDERİCİ: C++ tarzı mantıksal && operatörü, Python standardı olan "and" ile değiştirildi.
+            if current_price <= nw_alt_4h and not st.session_state[f"{state_prefix}l_status"][2]:
                 buy_amt = layer_sizes[2]
                 st.session_state[f"{state_prefix}balance_usd"] -= buy_amt * current_price
                 st.session_state[f"{state_prefix}l_crypto"] += buy_amt
