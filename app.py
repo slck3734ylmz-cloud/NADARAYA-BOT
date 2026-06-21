@@ -6,6 +6,32 @@ import time
 import requests
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from supabase import create_client, Client  # BUG FIX: Veritabanı kütüphanesi eklendi
+
+# ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
+def check_password():
+    """Doğru şifre girilmeden hiçbir veritabanı veya borsa verisi yüklenmez."""
+    if "password_correct" not in st.session_state:
+        st.session_state.password_correct = False
+    
+    if st.session_state.password_correct:
+        return True
+        
+    st.markdown("<h2 style='text-align: center; color: white; margin-top: 50px;'>🔒 DCA Terminal Güvenlik Girişi</h2>", unsafe_allow_html=True)
+    col_login, _ = st.columns([1, 1.5])
+    with col_login:
+        user_password = st.text_input("Lütfen şahsi siber güvenlik şifrenizi girin:", type="password")
+        if st.button("Giriş Yap"):
+            if user_password == "dca2026": 
+                st.session_state.password_correct = True
+                st.rerun()
+            else:
+                st.error("❌ Hatalı Şifre! Erişim reddedildi.")
+    return False
+
+if not check_password():
+    st.stop()  # Şifre yanlışsa kodun geri kalanının çalışmasını durdurur
+# =========================================================================
 
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
@@ -175,31 +201,6 @@ def get_market_movers_and_funding():
     except Exception as e:
         return [], pd.DataFrame(), pd.DataFrame()
 
-# ================= EN EKSTREM FONLAMA ORANLARI TARAYICISI =================
-@st.cache_data(ttl=300)
-def get_extreme_funding_rates():
-    try:
-        tickers = exchange.fetch_tickers()
-        funding_rates = []
-        for symbol, ticker in tickers.items():
-            if symbol.endswith(':USDT'):
-                raw_info = ticker.get('info', {})
-                funding_val = raw_info.get('funding_rate')
-                if funding_val is not None:
-                    fr_val = float(funding_val) * 100.0
-                    funding_rates.append({
-                        'symbol': symbol.split(':')[0],
-                        'rate': fr_val
-                    })
-        
-        if len(funding_rates) == 0:
-            return []
-            
-        funding_rates.sort(key=lambda x: abs(x['rate']), reverse=True)
-        return funding_rates[:5]
-    except Exception as e:
-        return []
-
 # ================= 3 GÜNLÜK SANAL LİKİDASYON HARİTASI HESAPLAMA =================
 @st.cache_data(ttl=300)
 def estimate_liquidation_pools(symbol):
@@ -271,9 +272,8 @@ selected_symbol = [item['symbol'] for item in top_50_data if item['display'] == 
 # ================= SOL PANEL (SIDEBAR) FONLAMA ORANLARI YAZDIRMA =================
 st.sidebar.markdown("---")
 st.sidebar.subheader("💸 En Ekstrem Fonlama Oranları (Top 5)")
-extreme_rates_sb = get_extreme_funding_rates()
-if extreme_rates_sb:
-    for item in extreme_rates_sb:
+if extreme_rates:
+    for item in extreme_rates:
         rate_str = f"{item['rate']:+.4f}%"
         if item['rate'] < 0:
             st.sidebar.markdown(f"**{item['symbol']}**: :green[{rate_str}]")
@@ -432,7 +432,7 @@ while True:
         df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
         diff_4h = df_4h_res["Kapanis"].diff()
         up_4h = diff_4h.clip(lower=0)
-        down_4h = -diff_4h.clip(upper=0) # BUG FIX: down_4h limit süzgeci düzeltildi
+        down_4h = -diff_4h.clip(upper=0)  # BUG FIX: down_4h limit süzgeci düzeltildi
         ma_up_4h = up_4h.rolling(14).mean()
         ma_down_4h = down_4h.rolling(14).mean()
         rs_4h = ma_up_4h / ma_down_4h
@@ -680,7 +680,7 @@ while True:
                     st.pyplot(fig4)
                     plt.close(fig4)
 
-                # --- LİKİDASYON HARİTASI (SOL SÜTUNDA - SIFIR KAYDIRMA - AKTİFLEŞTİRİLDİ) ---
+                # --- LİKİDASYON HARİTASI (SOL SÜTUNDA - SIFIR KAYDIRMA) ---
                 st.markdown("---")
                 st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
                 st.write("Fiyat hareketleri ve hacim birikimlerine göre kaldıraçlı pozisyonların (25x, 50x, 100x) tahmini likidasyon seviyeleri.")
@@ -691,14 +691,14 @@ while True:
                     if not df_long_liq.empty:
                         st.table(df_long_liq.reset_index(drop=True))
                     else:
-                        st.write("Likidasyon verileri yükleniyor...")
+                        st.write("Veriler yükleniyor...")
                         
                 with col_liq_s:
                     st.error("🟢 SHORT LİKİDASYON HAVUZLARI")
                     if not df_short_liq.empty:
                         st.table(df_short_liq.reset_index(drop=True))
                     else:
-                        st.write("Likidasyon verileri yükleniyor...")
+                        st.write("Veriler yükleniyor...")
 
             # --- SAĞ SÜTUN (KONTROL MASASI VE GÖSTERGELER) ---
             with col_right:
