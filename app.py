@@ -35,6 +35,29 @@ if not check_password():
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
+# ================= SEAMLESS / FLICKER-FREE (KIPIRDAMASIZ) CSS ENJEKSİYONU =================
+st.markdown(
+    """
+    <style>
+    /* Yenileme esnasında ekranın kararmasını (dimming efekti) tamamen engeller */
+    div[data-testid="stAppViewBlockContainer"] {
+        opacity: 1.0 !important;
+        transition: none !important;
+    }
+    /* Sağ üst köşedeki göz yoran "Running..." (Çalışıyor) simgesini gizler */
+    div[data-testid="stStatusWidget"] {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+# ==========================================================================================
+
+# Grafikleri küresel olarak karanlık temaya ayarlıyoruz
+plt_style_theme = "plotly_dark"
+
 # ================= ENTEGRE EDİLMİŞ TELEGRAM VE VERİTABANI AYARLARINIZ =================
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
@@ -557,7 +580,8 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
     st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
     countdown_placeholder = st.sidebar.empty()
 
-    # ================= MİMARİ GÜNCELLEME: DÖNGÜSÜZ GÜVENLİ YENİDEN TETİKLEME YAPISI =================
+    main_container = st.empty()
+
     try:
         # 1. ANLIK BORSA TICKER VERİSİ SORGULAMA
         live_ticker = exchange.fetch_ticker(selected_symbol)
@@ -585,7 +609,8 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
         is_volatile = current_std > historical_median_std
         market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
-        # 4. YENİ GELİŞMİŞ VERİ VE RESAMPLE YAPISI
+        # =================== 4. YENİ GELİŞMİŞ VERİ VE RESAMPLE YAPISI ===================
+        # 1 Dakikalık veriler (Master veri)
         raw_candles = exchange.fetch_ohlcv(selected_symbol, "1m", limit=1000)
         df_1m = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_1m["Zaman"] = pd.to_datetime(df_1m["Zaman"], unit="ms")
@@ -804,7 +829,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             st.session_state[f"{state_prefix}log_history"].append(msg)
             save_state_to_db()
 
-        # ARAYÜZÜ DOĞRUDAN ÇİZİYORUZ (HATA GİDERİCİ: Döngüsüz, tek seferlik temiz çizim)
+        # ARAYÜZÜ ÇİZİYORUZ
         col_left, col_right = st.columns([1.6, 1])
         
         with col_left:
@@ -905,7 +930,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             st.write("🎯 **Canlı Sinyal DCA Yönetim Kartı**")
             col_l, col_s = st.columns(2)
             
-                    
             with col_l:
                 st.info("📈 LONG KADEMELERİ")
                 k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f})" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_5m:.2f})"
@@ -936,6 +960,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     else:
                         st.warning(f"🛡️ **Emniyet (Stop):** `PASİF` (3. Kademeden Sonra)")
 
+        # Günlük Piyasa Liderleri Tabloları container kapsamına alındı (Yığılma önlendi)
         st.markdown("---")
         st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
         col_g, col_lo = st.columns(2)
@@ -944,20 +969,4 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             if not df_gainers.empty: st.table(df_gainers.reset_index(drop=True))
         with col_lo:
             st.error("📉 EN ÇOK DÜŞENLER")
-            if not df_losers.empty: st.table(df_losers.reset_index(drop=True))
-
-        st.markdown("---")
-        if st.session_state[f"{state_prefix}log_history"]:
-            st.write("📜 **Son Sinyaller (Log)**")
-            for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
-                st.write(log)
-
-    except Exception as e:
-        st.sidebar.error(f"Hata oluştu: {e}")
-        
-    # ================= GERİ SAYIM VE GÜVENLİ YENİDEN TETİKLEME =================
-    for remaining in range(10, 0, -1):
-        countdown_placeholder.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
-        time.sleep(1)
-    countdown_placeholder.write("🔄 Taranıyor...")
-    st.rerun()  # Arka planda asla kilitlenmeyen kararlı yeniden tetikleyici
+            if not df_losers.empty: st.table(df_losers.reset_index(drop=Tr
