@@ -40,7 +40,6 @@ st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 plt.style.use('dark_background')
 
 # ================= ENTEGRE EDİLMİŞ TELEGRAM VE VERİTABANI AYARLARINIZ =================
-# Talebiniz doğrultusunda kanal adınız @kyounkripto olarak kalıcı olarak kodlanmıştır
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
 
@@ -58,7 +57,7 @@ exchange = ccxt.gate({
     }
 })
 
-# ================= MATEMATİKSEL RSI IRAKSAMA (DIVERGENCE) TESPİT ALGORİTMASI =================
+# ================= MATEMATİKSEL RSI IRAKSAMA TESPİT ALGORİTMASI =================
 def detect_rsi_divergence(closes, rsis):
     if len(closes) < 15 or len(rsis) < 15:
         return False, False
@@ -138,34 +137,66 @@ def get_top_50_volume_coins():
             {'symbol': "ETH/USDT:USDT", 'display': "ETH/USDT ($3,500.00 | +0.00%)"}
         ]
 
-# ================= EN EKSTREM FONLAMA ORANLARI TARAYICISI =================
+# ================= EN EKSTREM FONLAMA ORANLARI VE EN ÇOK YÜKSELEN/DÜŞENLER GÜÇLÜ TARAYICISI =================
 @st.cache_data(ttl=300)
-def get_extreme_funding_rates():
+def get_market_movers_and_funding():
     try:
         tickers = exchange.fetch_tickers()
+        movers = []
         funding_rates = []
+        
         for symbol, ticker in tickers.items():
             if symbol.endswith(':USDT'):
+                # 1. Hacim ve Değişim Verisi
+                quote_vol = ticker.get('quoteVolume') or 0.0
+                price = ticker.get('last') or ticker.get('close') or 0.0
+                change = ticker.get('percentage') or 0.0
+                
+                # 2. Fonlama Oranı Verisi
                 raw_info = ticker.get('info', {})
                 funding_val = raw_info.get('funding_rate')
+                fr_val = float(funding_val) * 100.0 if funding_val is not None else 0.0
+                
+                clean_sym = symbol.split(":")[0]
+                
+                if price > 0:
+                    movers.append({
+                        'Coin': clean_sym,
+                        'Fiyat (USDT)': price,
+                        'Değişim (%)': change,
+                        'Fonlama Oranı': fr_val
+                    })
+                    
                 if funding_val is not None:
-                    fr_val = float(funding_val) * 100.0
                     funding_rates.append({
-                        'symbol': symbol.split(':')[0],
+                        'symbol': clean_sym,
                         'rate': fr_val
                     })
         
-        if len(funding_rates) == 0:
-            return []
-            
+        # En Ekstrem 5 Fonlama Oranı
         funding_rates.sort(key=lambda x: abs(x['rate']), reverse=True)
-        return funding_rates[:5]
+        top_5_funding = funding_rates[:5]
+        
+        # En Çok Yükselenler (Top 5 Gainers)
+        df_movers = pd.DataFrame(movers)
+        df_gainers = df_movers.sort_values(by='Değişim (%)', ascending=False).head(5).copy()
+        df_gainers['Değişim (%)'] = df_gainers['Değişim (%)'].apply(lambda x: f"+{x:.2f}%")
+        df_gainers['Fonlama Oranı'] = df_gainers['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
+        df_gainers['Fiyat (USDT)'] = df_gainers['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
+        
+        # En Çok Düşenler (Top 5 Losers)
+        df_losers = df_movers.sort_values(by='Değişim (%)', ascending=True).head(5).copy()
+        df_losers['Değişim (%)'] = df_losers['Değişim (%)'].apply(lambda x: f"{x:.2f}%")
+        df_losers['Fonlama Oranı'] = df_losers['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
+        df_losers['Fiyat (USDT)'] = df_losers['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
+        
+        return top_5_funding, df_gainers[['Coin', 'Fiyat (USDT)', 'Değişim (%)', 'Fonlama Oranı']], df_losers[['Coin', 'Fiyat (USDT)', 'Değişim (%)', 'Fonlama Oranı']]
     except Exception as e:
-        return []
+        return [], pd.DataFrame(), pd.DataFrame()
+# ===================================================================================================
 
-# Canlı Fiyatlı ve Yüzdelikli 50 coini çekiyoruz
-top_50_data = get_top_50_volume_coins()
-display_options = [item['display'] for item in top_50_data]
+# Veritabanını yormamak için toplu borsa analizi tek seferde çekilir
+extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
 
 # Streamlit Yan Panel (Sidebar) Tasarımı
 st.sidebar.title("💳 Cüzdan Durumu")
@@ -178,7 +209,6 @@ selected_symbol = [item['symbol'] for item in top_50_data if item['display'] == 
 # ================= SOL PANEL (SIDEBAR) FONLAMA ORANLARI YAZDIRMA =================
 st.sidebar.markdown("---")
 st.sidebar.subheader("💸 En Ekstrem Fonlama Oranları (Top 5)")
-extreme_rates = get_extreme_funding_rates()
 if extreme_rates:
     for item in extreme_rates:
         rate_str = f"{item['rate']:+.4f}%"
@@ -194,7 +224,7 @@ st.sidebar.markdown("---")
 st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
 countdown_placeholder = st.sidebar.progress(0)
 
-# ================= VERİTABANINDAN DURUMU GERİ YÜKLEME (RESTORE) =================
+# Seçilen coinin durum değişkenleri (Her coin için bağımsız session_state saklanır)
 state_prefix = f"{selected_symbol}_"
 
 try:
@@ -325,7 +355,6 @@ while True:
         # 1h resample ve NW hesaplama (Sapma: 3.0)
         df_1h = df.resample("60min", on="Zaman").last().ffill().reset_index()
         df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
-        # 1h RSI hesaplama
         diff_1h = df_1h["Kapanis"].diff()
         up_1h = diff_1h.clip(lower=0)
         down_1h = -diff_1h.clip(upper=0)
@@ -338,7 +367,6 @@ while True:
         # 4h resample ve NW hesaplama (Sapma: 3.0)
         df_4h_res = df.resample("240min", on="Zaman").last().ffill().reset_index()
         df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
-        # 4h RSI hesaplama
         diff_4h = df_4h_res["Kapanis"].diff()
         up_4h = diff_4h.clip(lower=0)
         down_4h = -diff_4h.clip(upper=0)
@@ -367,7 +395,7 @@ while True:
         rsi_1h = latest_row["RSI_14_1h"] if "RSI_14_1h" in latest_row else 50.0
         rsi_4h = latest_row["RSI_14_4h"] if "RSI_14_4h" in latest_row else 50.0
 
-        # Canlı Iraksama Analizini Yapıyoruz (TÜM ZAMAN DİLİMLERİ İÇİN AKTİFLEŞTİRİLDİ)
+        # Canlı Iraksama Analizini Yapıyoruz
         bull_div_5m, bear_div_5m = detect_rsi_divergence(df["Kapanis"].values, df["RSI_14"].values)
         bull_div_1h, bear_div_1h = detect_rsi_divergence(df_1h["Kapanis"].values, df_1h["RSI_14"].values)
         bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h_res["Kapanis"].values, df_4h_res["RSI_14"].values)
@@ -392,7 +420,7 @@ while True:
 
             elif current_price >= l_tp:
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                msg = f"🟢 *LONG ORTAK KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
+                msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"] = 0.0
@@ -606,7 +634,7 @@ while True:
                 col_r1, col_r2, col_r3 = st.columns(3)
                 
                 with col_r1:
-                    st.write("**⏱️ 5m (Skalp)**")
+                    st.write("**5m (Skalp)**")
                     rsi_5m_state = f"{rsi_5m:.1f} (UCUZ 🟢)" if rsi_5m < 30 else (f"{rsi_5m:.1f} (PAHALI 🔴)" if rsi_5m > 70 else f"{rsi_5m:.1f} (NÖTR)")
                     st.write(rsi_5m_state)
                     if bull_div_5m:
@@ -617,7 +645,7 @@ while True:
                         st.write("Iraksama: *Yok*")
                         
                 with col_r2:
-                    st.write("**⏱️ 1h (Orta)**")
+                    st.write("**1h (Orta)**")
                     rsi_1h_state = f"{rsi_1h:.1f} (UCUZ 🟢)" if rsi_1h < 30 else (f"{rsi_1h:.1f} (PAHALI 🔴)" if rsi_1h > 70 else f"{rsi_1h:.1f} (NÖTR)")
                     st.write(rsi_1h_state)
                     if bull_div_1h:
@@ -628,8 +656,9 @@ while True:
                         st.write("Iraksama: *Yok*")
                         
                 with col_r3:
-                    st.write("**🌎 4h (Makro)**")
-                    st.write("50.0 (NÖTR)")
+                    st.write("**4h (Makro)**")
+                    rsi_4h_state = f"{rsi_4h:.1f} (UCUZ 🟢)" if rsi_4h < 30 else (f"{rsi_4h:.1f} (PAHALI 🔴)" if rsi_4h > 70 else f"{rsi_4h:.1f} (NÖTR)")
+                    st.write(rsi_4h_state)
                     if bull_div_4h:
                         st.success("📈 BOĞA IRAKSAMASI!")
                     elif bear_div_4h:
@@ -678,6 +707,25 @@ while True:
                     st.write("📜 **Son Sinyaller (Log)**")
                     for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
                         st.write(log)
+
+            # --- GÜNLÜK PİYASA LİDERLERİ TABLOLARI (YENİ EKLEME) ---
+            st.markdown("---")
+            st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
+            col_g, col_lo = st.columns(2)
+            
+            with col_g:
+                st.success("📈 EN ÇOK YÜKSELENLER (TOP 5 GAINERS)")
+                if not df_gainers.empty:
+                    st.table(df_gainers.reset_index(drop=True))
+                else:
+                    st.write("Veriler yükleniyor...")
+                    
+            with col_lo:
+                st.error("📉 EN ÇOK DÜŞENLER (TOP 5 LOSERS)")
+                if not df_losers.empty:
+                    st.table(df_losers.reset_index(drop=True))
+                else:
+                    st.write("Veriler yükleniyor...")
 
     except Exception as e:
         st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
