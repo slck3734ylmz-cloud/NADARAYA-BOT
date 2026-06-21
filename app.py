@@ -6,6 +6,32 @@ import time
 import requests
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from supabase import create_client, Client  # BUG FIX: Veritabanı kütüphanesi eklendi
+
+# ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
+def check_password():
+    """Doğru şifre girilmeden hiçbir veritabanı veya borsa verisi yüklenmez."""
+    if "password_correct" not in st.session_state:
+        st.session_state.password_correct = False
+    
+    if st.session_state.password_correct:
+        return True
+        
+    st.markdown("<h2 style='text-align: center; color: white; margin-top: 50px;'>🔒 DCA Terminal Güvenlik Girişi</h2>", unsafe_allow_html=True)
+    col_login, _ = st.columns([1, 1.5])
+    with col_login:
+        user_password = st.text_input("Lütfen şahsi siber güvenlik şifrenizi girin:", type="password")
+        if st.button("Giriş Yap"):
+            if user_password == "dca2026": 
+                st.session_state.password_correct = True
+                st.rerun()
+            else:
+                st.error("❌ Hatalı Şifre! Erişim reddedildi.")
+    return False
+
+if not check_password():
+    st.stop()  # Şifre yanlışsa kodun geri kalanının çalışmasını durdurur
+# =========================================================================
 
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
@@ -650,25 +676,25 @@ while True:
                     st.pyplot(fig4)
                     plt.close(fig4)
 
-                # =================== LİKİDASYON HARİTASI (SOL SÜTUNA ALINDI - SIFIR KAYDIRMA) ===================
+                # --- LİKİDASYON HARİTASI TABLOLARI (SOL SÜTUNA ALINDI - SIFIR KAYDIRMA) ---
                 st.markdown("---")
-                st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
+                st.subheader("🎯 3 Günlük Tahmini Likidasyon Yoğunluk Haritası (Liquidation Pools)")
                 st.write("Fiyat hareketleri ve hacim birikimlerine göre kaldıraçlı pozisyonların (25x, 50x, 100x) tahmini likidasyon seviyeleri.")
                 col_liq_l, col_liq_s = st.columns(2)
                 
                 with col_liq_l:
-                    st.info("🔴 LONG LİKİDASYON HAVUZLARI (DESTEK SEVİYELERİ)")
+                    st.info("🔴 LONG LİKİDASYON HAVUZLARI")
                     if not df_long_liq.empty:
                         st.table(df_long_liq.reset_index(drop=True))
                     else:
-                        st.write("Likidasyon verileri yükleniyor...")
+                        st.write("Veriler yükleniyor...")
                         
                 with col_liq_s:
-                    st.error("🟢 SHORT LİKİDASYON HAVUZLARI (DİRENÇ SEVİYELERİ)")
+                    st.error("🟢 SHORT LİKİDASYON HAVUZLARI")
                     if not df_short_liq.empty:
                         st.table(df_short_liq.reset_index(drop=True))
                     else:
-                        st.write("Likidasyon verileri yükleniyor...")
+                        st.write("Veriler yükleniyor...")
 
             # --- SAĞ SÜTUN (KONTROL MASASI VE GÖSTERGELER) ---
             with col_right:
@@ -770,7 +796,7 @@ while True:
                     for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
                         st.write(log)
 
-            # --- GÜNLÜK PİYASA LİDERLERİ TABLOLARI (SAYFA EN ALTINA ALINDI) ---
+            # --- GÜNLÜK PİYASA LİDERLERİ TABLOLARI (SAYFA EN ALTINDA) ---
             st.markdown("---")
             st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
             col_g, col_lo = st.columns(2)
