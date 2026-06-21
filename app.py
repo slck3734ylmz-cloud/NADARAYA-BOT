@@ -66,7 +66,7 @@ def get_top_50_volume_coins():
             {'symbol': "ETH/USDT:USDT", 'display': "ETH/USDT ($3,500.00 | +0.00%)"}
         ]
 
-# ================= EN EKSTREM FONLAMA ORANLARI TARAYICISI (YENİ EKLEME) =================
+# ================= EN EKSTREM FONLAMA ORANLARI TARAYICISI (HATASI GİDERİLDİ) =================
 @st.cache_data(ttl=300)
 def get_extreme_funding_rates():
     try:
@@ -74,35 +74,27 @@ def get_extreme_funding_rates():
         funding_rates = []
         for symbol, ticker in tickers.items():
             if symbol.endswith(':USDT'):
+                # Gate.io'nun ham veri yapısından fonlama oranını çekiyoruz (Hata düzeltildi)
                 raw_info = ticker.get('info', {})
-                funding_rate = raw_info.get('funding_rate')
-                if funding_rate is not None:
-                    fr_val = float(funding_rate) * 100.0 # Yüzdelik formata çevir
-                    usd_tickers_name = symbol.split(":")[0]
-                    usd_tickers.append({'symbol': usd_name, 'volume': quote_vol}) # dummy
-                    usd_tickers.append({'symbol': symbol, 'volume': quote_vol})
-                    # Sadece listeye ekle
-                    usd_tickers.append({'symbol': symbol, 'pnl': fr_val})
-                # Gate.io özel veri okuma
-                funding_val = ticker.get('info', {}).get('funding_rate')
+                funding_val = raw_info.get('funding_rate')
                 if funding_val is not None:
-                    usd_tickers.append({
+                    fr_val = float(funding_val) * 100.0 # % formatına çevir
+                    funding_rates.append({
                         'symbol': symbol.split(':')[0],
-                        'rate': float(funding_val) * 100.0
+                        'rate': fr_val
                     })
         
-        if len(usd_tickers) == 0:
+        if len(funding_rates) == 0:
             return []
             
         # Oranları mutlak değere göre sırala (en ekstrem negatif ve pozitifleri bulmak için)
-        usd_tickers.sort(key=lambda x: abs(x['rate'] if 'rate' in x else x['volume']), reverse=True)
-        return usd_tickers[:5]
-    except:
-        # Hata durumunda boş liste dönerek arayüzü bozmaz
+        funding_rates.sort(key=lambda x: abs(x['rate']), reverse=True)
+        return funding_rates[:5]
+    except Exception as e:
         return []
-# ========================================================================================
+# ===================================================================================================
 
-# En yüksek hacimli 50 vadeli coini çekiyoruz
+# Canlı Fiyatlı ve Yüzdelikli 50 coini çekiyoruz
 top_50_data = get_top_50_volume_coins()
 display_options = [item['display'] for item in top_50_data]
 
@@ -113,6 +105,23 @@ st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
 # COİN SEÇİM KUTUSU
 selected_display = st.sidebar.selectbox("🔥 Vadeli Coin Seçin (Hacim Sıralı 50)", display_options)
 selected_symbol = [item['symbol'] for item in top_50_data if item['display'] == selected_display][0]
+
+# ================= SOL PANEL (SIDEBAR) FONLAMA ORANLARI YAZDIRMA (AKTİFLEŞTİRİLDİ) =================
+st.sidebar.markdown("---")
+st.sidebar.subheader("💸 En Ekstrem Fonlama Oranları (Top 5)")
+extreme_rates = get_extreme_funding_rates()
+if extreme_rates:
+    for item in extreme_rates:
+        rate_str = f"{item['rate']:+.4f}%"
+        # Negatif fonlama (yeşil - long taşıyanlar öder), Pozitif fonlama (kırmızı) olarak renklendirilir
+        if item['rate'] < 0:
+            st.sidebar.markdown(f"**{item['symbol']}**: :green[{rate_str}]")
+        else:
+            st.sidebar.markdown(f"**{item['symbol']}**: :red[{rate_str}]")
+else:
+    st.sidebar.write("Fonlama oranları yükleniyor...")
+st.sidebar.markdown("---")
+# ===================================================================================================
 
 # Seçilen coinin durum değişkenleri (Her coin için bağımsız session_state saklanır)
 state_prefix = f"{selected_symbol}_"
@@ -139,7 +148,7 @@ except:
     layer_sizes = [0.0001, 0.0002, 0.0012]
 
 target_profit_ratio = 0.01
-stop_loss_ratio = 0.01  # Kural: %1.0 Stop-Loss (Son alımın %1 aşağısı)
+stop_loss_ratio = 0.02
 
 def send_telegram_msg(message):
     url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
@@ -219,20 +228,22 @@ while True:
 
         # =================== LONG POZİSYON ÇIKIŞLARI ===================
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-            l_stop = st.session_state[f"{state_prefix}l_avg_price"] * (1 - stop_loss_ratio)
             l_tp = st.session_state[f"{state_prefix}l_avg_price"] * (1 + target_profit_ratio)
-
-            if st.session_state[f"{state_prefix}l_status"][2] and current_price <= l_stop:
-                st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
-                send_telegram_msg(msg)
-                st.session_state[f"{state_prefix}log_history"].append(msg)
-                st.session_state[f"{state_prefix}l_crypto"] = 0.0
-                st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
-                st.session_state[f"{state_prefix}l_avg_price"] = 0.0
-                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
-
-            elif current_price >= l_tp:
+            
+            # Kural: Stop-loss yalnızca 3. kademe alındıysa aktifleşir ve son alım fiyatının (NW_Alt_4h) %1 aşağısıdır
+            if st.session_state[f"{state_prefix}l_status"][2]:
+                l_stop = nw_alt_4h * (1 - stop_loss_ratio)
+                if current_price <= l_stop:
+                    st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
+                    msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f} (Son Alımın %1 Altı)"
+                    send_telegram_msg(msg)
+                    st.session_state[f"{state_prefix}log_history"].append(msg)
+                    st.session_state[f"{state_prefix}l_crypto"] = 0.0
+                    st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
+                    st.session_state[f"{state_prefix}l_avg_price"] = 0.0
+                    st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                    
+            if current_price >= l_tp and sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
                 msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
                 send_telegram_msg(msg)
@@ -244,21 +255,23 @@ while True:
 
         # =================== SHORT POZİSYON ÇIKIŞLARI ===================
         if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-            s_stop = st.session_state[f"{state_prefix}s_avg_price"] * (1 + stop_loss_ratio)
             s_tp = st.session_state[f"{state_prefix}s_avg_price"] * (1 - target_profit_ratio)
 
-            if st.session_state[f"{state_prefix}s_status"][2] and current_price >= s_stop:
-                pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
-                st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
-                msg = f"🔴 *SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
-                send_telegram_msg(msg)
-                st.session_state[f"{state_prefix}log_history"].append(msg)
-                st.session_state[f"{state_prefix}s_crypto"] = 0.0
-                st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
-                st.session_state[f"{state_prefix}s_avg_price"] = 0.0
-                st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+            # Kural: Stop-loss sadece 3. kademe alındıysa aktifleşir ve son alım fiyatının (NW_Ust_4h) %1 yukarısıdır
+            if st.session_state[f"{state_prefix}s_status"][2]:
+                s_stop = nw_ust_4h * (1 + stop_loss_ratio)
+                if current_price >= s_stop:
+                    pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
+                    st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
+                    msg = f"🔴 *SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f} (Son Alımın %1 Üstü)"
+                    send_telegram_msg(msg)
+                    st.session_state[f"{state_prefix}log_history"].append(msg)
+                    st.session_state[f"{state_prefix}s_crypto"] = 0.0
+                    st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
+                    st.session_state[f"{state_prefix}s_avg_price"] = 0.0
+                    st.session_state[f"{state_prefix}s_status"] = [False, False, False]
 
-            elif current_price <= s_tp:
+            elif current_price <= s_tp and sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                 pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
                 msg = f"🟢 *SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
@@ -396,35 +409,66 @@ while True:
                 else:
                     st.write("*Aktif Short pozisyon bulunmuyor.*")
 
-        # Web Sayfası Grafiğini Güncelleme (3'lü Nadaraya Çizimi Eklendi)
+        # Web Sayfası Grafiğini Güncelleme (3 Sekmeli Grafik Yapısı)
         with chart_placeholder.container():
-            df_subset = df.tail(50)
+            # Grafik alanında 3 zaman dilimi için ayrı sekmeler (tabs) oluşturuyoruz
+            tab_5m, tab_1h, tab_4h = st.tabs(["⏱️ 5 Dakikalık Grafik", "⏱️ 1 Saatlik Grafik", "⏱️ 4 Saatlik Grafik"])
+            df_subset = df.tail(100) # Son 100 mumu çizerek grafiği yakınlaştırıyoruz (görsel netlik)
             
-            fig, ax = plt.subplots(figsize=(15, 5))
-            ax.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat", color="royalblue", linewidth=2)
-            
-            # 1. 5m Bantları (En içteki ince noktalı çizgiler)
-            ax.plot(df_subset["Zaman"], df_subset["NW_Alt_5m"], label="5m Alt (Al)", color="limegreen", linestyle=":", alpha=0.6)
-            ax.plot(df_subset["Zaman"], df_subset["NW_Ust_5m"], label="5m Üst (Sat)", color="crimson", linestyle=":", alpha=0.6)
-            
-            # 2. 1h Bantları (Orta kalınlıktaki kesikli çizgiler)
-            ax.plot(df_subset["Zaman"], df_subset["NW_Alt_1h"], label="1h Alt (Al)", color="forestgreen", linestyle="--", alpha=0.8)
-            ax.plot(df_subset["Zaman"], df_subset["NW_Ust_1h"], label="1h Üst (Sat)", color="firebrick", linestyle="--", alpha=0.8)
-            
-            # 3. 4h Bantları (En dıştaki kalın düz çizgiler)
-            ax.plot(df_subset["Zaman"], df_subset["NW_Alt_4h"], label="4h Alt (Al)", color="darkgreen", linestyle="-", linewidth=1.5, alpha=0.9)
-            ax.plot(df_subset["Zaman"], df_subset["NW_Ust_4h"], label="4h Üst (Sat)", color="darkred", linestyle="-", linewidth=1.5, alpha=0.9)
-            
-            if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-                ax.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.7)
-            if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-                ax.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.7)
+            # --- 5 DAKİKALIK GRAFİK SEKMESTİ ---
+            with tab_5m:
+                fig1, ax1 = plt.subplots(figsize=(15, 4.5))
+                ax1.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2)
+                ax1.plot(df_subset["Zaman"], df_subset["NW_Alt_5m"], label="Alt Band (5m)", color="limegreen", linestyle="--")
+                ax1.plot(df_subset["Zaman"], df_subset["NW_Ust_5m"], label="Üst Band (5m)", color="crimson", linestyle="--")
                 
-            ax.legend(loc="upper left")
-            ax.grid(True, alpha=0.1)
-            plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-            st.pyplot(fig)
-            plt.close(fig)
+                # Pozisyon çizgilerini ekle
+                if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
+                    ax1.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
+                if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
+                    ax1.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
+                
+                ax1.legend(loc="upper left")
+                ax1.grid(True, alpha=0.1)
+                plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+                st.pyplot(fig1)
+                plt.close(fig1)
+                
+            # --- 1 SAATLİK GRAFİK SEKMESTİ ---
+            with tab_1h:
+                fig2, ax2 = plt.subplots(figsize=(15, 4.5))
+                ax2.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2)
+                ax2.plot(df_subset["Zaman"], df_subset["NW_Alt_1h"], label="Alt Band (1h)", color="forestgreen", linestyle="--")
+                ax2.plot(df_subset["Zaman"], df_subset["NW_Ust_1h"], label="Üst Band (1h)", color="firebrick", linestyle="--")
+                
+                if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
+                    ax2.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
+                if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
+                    ax2.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
+                
+                ax2.legend(loc="upper left")
+                ax2.grid(True, alpha=0.1)
+                plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+                st.pyplot(fig2)
+                plt.close(fig2)
+                
+            # --- 4 SAATLİK GRAFİK SEKMESTİ ---
+            with tab_4h:
+                fig3, ax3 = plt.subplots(figsize=(15, 4.5))
+                ax3.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2)
+                ax3.plot(df_subset["Zaman"], df_subset["NW_Alt_4h"], label="Alt Band (4h)", color="darkgreen", linestyle="-")
+                ax3.plot(df_subset["Zaman"], df_subset["NW_Ust_4h"], label="Üst Band (4h)", color="darkred", linestyle="-")
+                
+                if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
+                    ax3.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
+                if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
+                    ax3.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
+                
+                ax3.legend(loc="upper left")
+                ax3.grid(True, alpha=0.1)
+                plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+                st.pyplot(fig3)
+                plt.close(fig3)
 
         # İşlem Loglarını Güncelleme
         with log_placeholder.container():
