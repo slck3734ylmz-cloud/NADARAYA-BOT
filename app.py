@@ -137,7 +137,7 @@ def get_top_50_volume_coins():
             {'symbol': "ETH/USDT:USDT", 'display': "ETH/USDT ($3,500.00 | +0.00%)"}
         ]
 
-# ================= EN EKSTREM FONLAMA ORANLARI VE EN ÇOK YÜKSELEN/DÜŞENLER GÜÇLÜ TARAYICISI =================
+# ================= EN EKSTREM FONLAMA ORANLARI VE EN ÇOK YÜKSELEN/DÜŞENLER GÜÇLÜ TARAYICI (DÜZELTİLDİ) =================
 @st.cache_data(ttl=300)
 def get_market_movers_and_funding():
     try:
@@ -148,18 +148,22 @@ def get_market_movers_and_funding():
         for symbol, ticker in tickers.items():
             if symbol.endswith(':USDT'):
                 # 1. Hacim ve Değişim Verisi
-                quote_vol = ticker.get('quoteVolume') or 0.0
+                volume = ticker.get('quoteVolume')
                 price = ticker.get('last') or ticker.get('close') or 0.0
                 change = ticker.get('percentage') or 0.0
                 
-                # 2. Fonlama Oranı Verisi
+                if volume is None:
+                    base_vol = ticker.get('baseVolume') or 0.0
+                    volume = base_vol * price
+                
+                # 2. Fonlama Oranı Verisi (Hata düzeltildi, tüm gereksiz kod kalıntıları silindi)
                 raw_info = ticker.get('info', {})
                 funding_val = raw_info.get('funding_rate')
                 fr_val = float(funding_val) * 100.0 if funding_val is not None else 0.0
                 
                 clean_sym = symbol.split(":")[0]
                 
-                if price > 0:
+                if price > 0 and volume > 0:
                     movers.append({
                         'Coin': clean_sym,
                         'Fiyat (USDT)': price,
@@ -173,6 +177,9 @@ def get_market_movers_and_funding():
                         'rate': fr_val
                     })
         
+        if len(movers) == 0:
+            return [], pd.DataFrame(), pd.DataFrame()
+            
         # En Ekstrem 5 Fonlama Oranı
         funding_rates.sort(key=lambda x: abs(x['rate']), reverse=True)
         top_5_funding = funding_rates[:5]
@@ -197,6 +204,10 @@ def get_market_movers_and_funding():
 
 # Veritabanını yormamak için toplu borsa analizi tek seferde çekilir
 extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
+
+# Canlı Fiyatlı ve Yüzdelikli 50 coini çekiyoruz
+top_50_data = get_top_50_volume_coins()
+display_options = [item['display'] for item in top_50_data]
 
 # Streamlit Yan Panel (Sidebar) Tasarımı
 st.sidebar.title("💳 Cüzdan Durumu")
@@ -224,7 +235,7 @@ st.sidebar.markdown("---")
 st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
 countdown_placeholder = st.sidebar.progress(0)
 
-# Seçilen coinin durum değişkenleri (Her coin için bağımsız session_state saklanır)
+# ================= VERİTABANINDAN DURUMU GERİ YÜKLEME (RESTORE) =================
 state_prefix = f"{selected_symbol}_"
 
 try:
@@ -395,7 +406,7 @@ while True:
         rsi_1h = latest_row["RSI_14_1h"] if "RSI_14_1h" in latest_row else 50.0
         rsi_4h = latest_row["RSI_14_4h"] if "RSI_14_4h" in latest_row else 50.0
 
-        # Canlı Iraksama Analizini Yapıyoruz
+        # Canlı Iraksama Analizini Yapıyoruz (TÜM ZAMAN DİLİMLERİ İÇİN AKTİFLEŞTİRİLDİ)
         bull_div_5m, bear_div_5m = detect_rsi_divergence(df["Kapanis"].values, df["RSI_14"].values)
         bull_div_1h, bear_div_1h = detect_rsi_divergence(df_1h["Kapanis"].values, df_1h["RSI_14"].values)
         bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h_res["Kapanis"].values, df_4h_res["RSI_14"].values)
@@ -630,7 +641,7 @@ while True:
                 
                 # RSI & Iraksama Kartı (HACİM/ZAMAN DİLİMLERİ İÇİN IRAKSAMALAR GÖRSELLEŞTİRİLDİ)
                 st.markdown("---")
-                st.write("⚡ **RSI & Momentum Sinyal Güç Süzgeci**")
+                st.write("⚡ **RSI & Momentum Süzgeci**")
                 col_r1, col_r2, col_r3 = st.columns(3)
                 
                 with col_r1:
@@ -708,7 +719,7 @@ while True:
                     for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
                         st.write(log)
 
-            # --- GÜNLÜK PİYASA LİDERLERİ TABLOLARI (YENİ EKLEME) ---
+            # --- GÜNLÜK PİYASA LİDERLERİ TABLOLARI ---
             st.markdown("---")
             st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
             col_g, col_lo = st.columns(2)
