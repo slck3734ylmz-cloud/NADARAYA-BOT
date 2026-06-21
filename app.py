@@ -15,19 +15,18 @@ telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "665969213"
 # =========================================================================
 
-# BYBIT FUTURES BAĞLANTISI (Amerika IP engellerini aşmak için Bybit altyapısına geçtik)
-exchange = ccxt.bybit()
+# KUCOIN FUTURES (Amerika IP engellerini aşmak için KuCoin Vadeli İşlemler altyapısına geçtik)
+exchange = ccxt.kucoinfutures()
 
-# ================= BYBIT FUTURES EN YÜKSEK HACİMLİ 50 PERPETUAL TARAYICI =================
+# ================= KUCOIN FUTURES EN YÜKSEK HACİMLİ 50 PERPETUAL TARAYICI =================
 @st.cache_data(ttl=300)  # Listeyi 5 dakikada bir günceller
 def get_top_50_volume_coins():
     try:
         tickers = exchange.fetch_tickers()
         usd_tickers = []
         for symbol, ticker in tickers.items():
-            # Bybit Sürekli Vadeli (Perpetual - .P) kontratları filtrele (:USDT ile biter)
+            # KuCoin Sürekli Vadeli (Perpetual - .P) kontratları filtrele (:USDT ile biter)
             if symbol.endswith(':USDT'):
-                # Boş veri kontrolü (None-guard)
                 quote_vol = ticker.get('quoteVolume')
                 if quote_vol is None:
                     base_vol = ticker.get('baseVolume') or 0.0
@@ -44,6 +43,7 @@ def get_top_50_volume_coins():
         top_50 = [item['symbol'] for item in usd_tickers[:50]]
         return top_50
     except Exception as e:
+        # Herhangi bir hata durumunda güvenli listeyi döndürür
         return ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "DOGE/USDT:USDT"]
 # ==========================================================================================
 
@@ -279,7 +279,7 @@ while True:
         # =================== EKRAN GÜNCELLEMELERİ (WEB UI) ===================
         with title_placeholder.container():
             st.title(f"📊 {selected_symbol.split(':')[0]} Vadeli DCA Canlı Takip Paneli")
-            st.write(f"Binance Futures Canlı Fiyatı: **{current_price:.2f} USDT**")
+            st.write(f"KuCoin Futures Canlı Fiyatı: **{current_price:.2f} USDT**")
 
         with trend_placeholder.container():
             col_t1, col_t2 = st.columns(2)
