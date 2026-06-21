@@ -9,15 +9,15 @@ import matplotlib.dates as mdates
 import plotly.graph_objects as go
 from supabase import create_client, Client
 
-# ================= EN BAŞTA BORSA NESNESİNİN TANIMLANMASI =================
-# HATA GİDERİCİ: exchange nesnesi tüm fonksiyonlardan önce hafızaya yüklenmesi için en tepeye alındı.
+# ================= KÜRESEL İNİŞ BAŞLANGICI VE BORSA BAĞLANTISI =================
+# HATA GİDERİCİ: exchange nesnesi borsa bağlantı hatası vermemesi için en tepede tanımlandı.
 exchange = ccxt.gate({'options': {'defaultType': 'swap'}})
 
-# ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
-    if st.session_state.password_correct: return True
+    if st.session_state.password_correct:
+        return True
     st.markdown("<h2 style='text-align: center; color: white; margin-top: 50px;'>🔒 DCA Terminal Güvenlik Girişi</h2>", unsafe_allow_html=True)
     col_login, _ = st.columns([1, 1.5])
     with col_login:
@@ -26,27 +26,52 @@ def check_password():
             if user_password == "dca2026": 
                 st.session_state.password_correct = True
                 st.rerun()
-            else: st.error("❌ Hatalı Şifre! Erişim reddedildi.")
+            else:
+                st.error("❌ Hatalı Şifre! Erişim reddedildi.")
     return False
 
-if not check_password(): st.stop()
+if not check_password():
+    st.stop()
 
+# Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
-# Flicker-Free CSS
-st.markdown("<style>div[data-testid='stAppViewBlockContainer']{opacity:1.0!important;transition:none!important;}div[data-testid='stStatusWidget']{display:none!important;visibility:hidden!important;}</style>", unsafe_allow_html=True)
+# ================= SEAMLESS / FLICKER-FREE (KARARMA ÖNLEYİCİ) CSS =================
+st.markdown(
+    """
+    <style>
+    div[data-testid="stAppViewBlockContainer"] {
+        opacity: 1.0 !important;
+        transition: none !important;
+    }
+    div[data-testid="stAppViewContainer"] {
+        opacity: 1.0 !important;
+        transition: none !important;
+    }
+    [data-loading="true"] {
+        opacity: 1.0 !important;
+        filter: none !important;
+    }
+    div[data-testid="stStatusWidget"] {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz (Backtest sayfanız için gerekli)
 plt.style.use('dark_background')
 
-# Telegram ve Supabase Ayarları
+# Supabase ve Telegram Ayarları
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
 supabase_url = "https://ahnwbxfghccotwnlhzgl.supabase.co"
 supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFobndieGZnaGNjb3R3bmxoemdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwMTI3NzcsImV4cCI6MjA5NzU4ODc3N30.9cR5NBti19ddH7UivdcikYFoCRwk42mIkOkElYqT2Oc"
 supabase: Client = create_client(supabase_url, supabase_key)
 
-# ================= MATEMATİKSEL FONKSİYONLAR =================
+# ================= MATEMATİKSEL VE TEKNİK YARDIMCI FONKSİYONLAR =================
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(period).mean()
@@ -56,24 +81,41 @@ def calculate_rsi(series, period=14):
 
 def detect_rsi_divergence(closes, rsis):
     if len(closes) < 15 or len(rsis) < 15: return False, False
-    c, r = closes[-15:], rsis[-15:]
-    lows = [i for i in range(1, len(c)-1) if c[i] < c[i-1] and c[i] < c[i+1]]
-    bull = len(lows) >= 2 and c[lows[-1]] < c[lows[-2]] and r[lows[-1]] > r[lows[-2]] and r[lows[-1]] < 45
-    highs = [i for i in range(1, len(c)-1) if c[i] > c[i-1] and c[i] > c[i+1]]
-    bear = len(highs) >= 2 and c[highs[-1]] > c[highs[-2]] and r[highs[-1]] < r[highs[-2]] and r[highs[-1]] > 55
-    return bull, bear
+    c_sub, r_sub = closes[-15:], rsis[-15:]
+    lows_idx = [i for i in range(1, len(c_sub)-1) if c_sub[i] < c_sub[i-1] and c_sub[i] < c_sub[i+1]]
+    bull_div = False
+    if len(lows_idx) >= 2:
+        i1, i2 = lows_idx[-2], lows_idx[-1]
+        if c_sub[i2] < c_sub[i1] and r_sub[i2] > r_sub[i1] and r_sub[i2] < 45:
+            bull_div = True
+    highs_idx = [i for i in range(1, len(c_sub)-1) if c_sub[i] > c_sub[i-1] and c_sub[i] > c_sub[i+1]]
+    bear_div = False
+    if len(highs_idx) >= 2:
+        i1, i2 = highs_idx[-2], highs_idx[-1]
+        if c_sub[i2] > c_sub[i1] and r_sub[i2] < r_sub[i1] and r_sub[i2] > 55:
+            bear_div = True
+    return bull_div, bear_div
 
 @st.cache_data(ttl=300)
 def get_top_50_volume_coins():
     try:
         tickers = exchange.fetch_tickers()
-        usd = []
-        for sym, t in tickers.items():
-            if sym.endswith(':USDT'):
-                v = t.get('quoteVolume') or (t.get('baseVolume', 0.0) * (t.get('last') or t.get('close') or 0.0))
-                if v > 0: usd.append({'symbol': sym, 'volume': v, 'price': t.get('last') or t.get('close') or 0.0, 'change': t.get('percentage') or 0.0})
-        usd.sort(key=lambda x: x['volume'], reverse=True)
-        return [{'symbol': x['symbol'], 'display': f"{x['symbol'].split(':')[0]} (${x['price']:,.2f} | {x['change']:+.2f}%)"} for x in usd[:50]]
+        usd_tickers = []
+        for symbol, ticker in tickers.items():
+            if symbol.endswith(':USDT'):
+                quote_vol = ticker.get('quoteVolume')
+                if quote_vol is None:
+                    base_vol = ticker.get('baseVolume') or 0.0
+                    last_price = ticker.get('last') or ticker.get('close') or 0.0
+                    quote_vol = base_vol * last_price
+                if quote_vol is not None and quote_vol > 0:
+                    usd_tickers.append({
+                        'symbol': symbol, 'volume': quote_vol, 
+                        'price': ticker.get('last') or ticker.get('close') or 0.0, 
+                        'change': ticker.get('percentage') or 0.0
+                    })
+        usd_tickers.sort(key=lambda x: x['volume'], reverse=True)
+        return [{'symbol': x['symbol'], 'display': f"{x['symbol'].split(':')[0]} (${x['price']:,.2f} | {x['change']:+.2f}%)"} for x in usd_tickers[:50]]
     except:
         return [{'symbol': "BTC/USDT:USDT", 'display': "BTC/USDT ($64,222.00 | +0.00%)"}]
 
@@ -81,24 +123,35 @@ def get_top_50_volume_coins():
 def get_market_movers_and_funding():
     try:
         tickers = exchange.fetch_tickers()
-        movers, funding = [], []
-        for sym, t in tickers.items():
-            if sym.endswith(':USDT'):
-                p, c = t.get('last') or t.get('close') or 0.0, t.get('percentage') or 0.0
-                fr = float(t.get('info', {}).get('funding_rate', 0.0)) * 100.0
-                clean = sym.split(":")[0]
-                if p > 0:
-                    movers.append({'Coin': clean, 'Fiyat (USDT)': p, 'Değişim (%)': c, 'Fonlama Oranı': fr})
-                    funding.append({'symbol': clean, 'rate': fr})
-        funding.sort(key=lambda x: abs(x['rate']), reverse=True)
-        df_m = pd.DataFrame(movers)
-        df_g = df_m.sort_values(by='Değişim (%)', ascending=False).head(5).copy()
-        df_l = df_m.sort_values(by='Değişim (%)', ascending=True).head(5).copy()
-        for df in [df_g, df_l]:
-            df['Değişim (%)'] = df['Değişim (%)'].apply(lambda x: f"{x:+.2f}%")
-            df['Fonlama Oranı'] = df['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
-            df['Fiyat (USDT)'] = df['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
-        return funding[:5], df_g, df_l
+        movers, funding_rates = [], []
+        for symbol, ticker in tickers.items():
+            if symbol.endswith(':USDT'):
+                volume = ticker.get('quoteVolume')
+                price = ticker.get('last') or ticker.get('close') or 0.0
+                change = ticker.get('percentage') or 0.0
+                if volume is None:
+                    base_vol = ticker.get('baseVolume') or 0.0
+                    volume = base_vol * price
+                raw_info = ticker.get('info', {})
+                funding_val = raw_info.get('funding_rate')
+                fr_val = float(funding_val) * 100.0 if funding_val is not None else 0.0
+                clean_sym = symbol.split(":")[0]
+                if price > 0 and volume > 0:
+                    movers.append({'Coin': clean_sym, 'Fiyat (USDT)': price, 'Değişim (%)': change, 'Fonlama Oranı': fr_val})
+                if funding_val is not None:
+                    funding_rates.append({'symbol': clean_sym, 'rate': fr_val})
+        if len(movers) == 0: return [], pd.DataFrame(), pd.DataFrame()
+        funding_rates.sort(key=lambda x: abs(x['rate']), reverse=True)
+        df_movers = pd.DataFrame(movers)
+        df_gainers = df_movers.sort_values(by='Değişim (%)', ascending=False).head(5).copy()
+        df_gainers['Değişim (%)'] = df_gainers['Değişim (%)'].apply(lambda x: f"+{x:.2f}%")
+        df_gainers['Fonlama Oranı'] = df_gainers['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
+        df_gainers['Fiyat (USDT)'] = df_gainers['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
+        df_losers = df_movers.sort_values(by='Değişim (%)', ascending=True).head(5).copy()
+        df_losers['Değişim (%)'] = df_losers['Değişim (%)'].apply(lambda x: f"{x:.2f}%")
+        df_losers['Fonlama Oranı'] = df_losers['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
+        df_losers['Fiyat (USDT)'] = df_losers['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
+        return funding_rates[:5], df_gainers[['Coin', 'Fiyat (USDT)', 'Değişim (%)', 'Fonlama Oranı']], df_losers[['Coin', 'Fiyat (USDT)', 'Değişim (%)', 'Fonlama Oranı']]
     except:
         return [], pd.DataFrame(), pd.DataFrame()
 
@@ -112,25 +165,26 @@ def estimate_liquidation_pools(symbol):
         volumes = df_3d["Hacim"].values
         current_p = df_3d.iloc[-1]["Kapanis"]
         round_step = 50.0 if current_p > 10000 else (1.0 if current_p > 100 else (0.1 if current_p > 1 else 0.01))
-        long_l, short_l = {}, {}
-        for i, row in df_3d.iterrows():
-            for m in [0.99, 0.98, 0.96]:
-                p = round((lows[i] * m) / round_step) * round_step
-                long_l[p] = long_l.get(p, 0.0) + volumes[i]
-            for m in [1.01, 1.02, 1.04]:
-                p = round((highs[i] * m) / round_step) * round_step
-                short_l[p] = short_l.get(p, 0.0) + volumes[i]
-        sl, ss = sorted(long_l.items(), key=lambda x: x[1], reverse=True)[:3], sorted(short_l.items(), key=lambda x: x[1], reverse=True)[:3]
-        sl.sort(key=lambda x: x[0], reverse=True)
-        ss.sort(key=lambda x: x[0], reverse=False)
-        return (
-            pd.DataFrame([{"Likidasyon Fiyatı": f"${p:,.2f}", "Yoğunluk Derecesi": "🔴🔴🔴 YÜKSEK" if v > df_3d["Hacim"].mean()*1.5 else "🔴🔴 ORTA"} for p, v in sl]),
-            pd.DataFrame([{"Likidasyon Fiyatı": f"${p:,.2f}", "Yoğunluk Derecesi": "🟢🟢🟢 YÜKSEK" if v > df_3d["Hacim"].mean()*1.5 else "🟢🟢 ORTA"} for p, v in ss])
-        )
+        long_liq_bins, short_liq_bins = {}, {}
+        for i in range(len(df_3d)):
+            h, l, vol = highs[i], lows[i], volumes[i]
+            for lev_mult in [0.99, 0.98, 0.96]:
+                p = round((l * lev_mult) / round_step) * round_step
+                long_liq_bins[p] = long_liq_bins.get(p, 0.0) + vol
+            for lev_mult in [1.01, 1.02, 1.04]:
+                p = round((h * lev_mult) / round_step) * round_step
+                short_liq_bins[p] = short_liq_bins.get(p, 0.0) + vol
+        sorted_long = sorted(long_liq_bins.items(), key=lambda x: x[1], reverse=True)[:3]
+        sorted_short = sorted(short_liq_bins.items(), key=lambda x: x[1], reverse=True)[:3]
+        sorted_long.sort(key=lambda x: x[0], reverse=True)
+        sorted_short.sort(key=lambda x: x[0], reverse=False)
+        long_pools = [{"Likidasyon Fiyatı": f"${p:,.2f}", "Yoğunluk Derecesi": "🔴🔴🔴 YÜKSEK" if v > np.mean(volumes)*1.5 else "🔴🔴 ORTA"} for p, v in sorted_long]
+        short_pools = [{"Likidasyon Fiyatı": f"${p:,.2f}", "Yoğunluk Derecesi": "🟢🟢🟢 YÜKSEK" if v > np.mean(volumes)*1.5 else "🟢🟢 ORTA"} for p, v in sorted_short]
+        return pd.DataFrame(long_pools), pd.DataFrame(short_pools)
     except:
         return pd.DataFrame(), pd.DataFrame()
 
-# Non-Repainting NW Filtresi ve Grafik Çizimi
+# Non-Repainting Nadaraya-Watson Filtresi ve Grafik Çizimi
 def nadaraya_watson_estimator(src, h=8):
     n = len(src)
     estimates = np.zeros(n)
@@ -158,11 +212,11 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
     fig.update_layout(title=title, template="plotly_dark", xaxis_title="Zaman", yaxis_title="Fiyat", margin=dict(l=20, r=20, t=40, b=20), height=400, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     return fig
 
-# Global veriler
+# ================= GLOBAL VERİLER VE YAN PANEL YAPILANDIRMASI =================
+# HATA GİDERİCİ: Global değişkenler borsa kilitlenmelerini önlemek adına en üst hizada çağrıldı
 extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
 top_50_data = get_top_50_volume_coins()
 
-# ================= YAN PANEL AYARLARI VE NAVİGASYON =================
 st.sidebar.title("🧭 Terminal Navigasyon")
 app_mode = st.sidebar.radio("Mod Seçin:", ["🖥️ Canlı DCA Terminal", "📊 Geriye Dönük Test (Backtest)"], key="global_app_mode_radio")
 
@@ -251,12 +305,21 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                 df_bt = calculate_nw_bands(df_bt, bt_std * 0.85, "_K2")
                 df_bt = calculate_nw_bands(df_bt, bt_std, "_K3")
                 
-                initial_balance, balance = 1000.0, 1000.0
-                l_status, l_crypto, l_usd_spent, l_avg_price = [False, False, False], 0.0, 0.0, 0.0
-                equity_curve, trade_logs = [], []
+                initial_balance = 1000.0
+                balance = initial_balance
+                
+                l_status = [False, False, False]
+                l_crypto = 0.0
+                l_usd_spent = 0.0
+                l_avg_price = 0.0
+                
+                equity_curve = []
+                trade_logs = []
                 
                 for i, row in df_bt.iterrows():
-                    close, t_time = row["Kapanis"], row["Zaman"]
+                    close = row["Kapanis"]
+                    t_time = row["Zaman"]
+                    
                     if sum(l_status) > 0:
                         l_tp_target = l_avg_price * (1 + bt_tp)
                         if l_status[2] and close <= (df_bt.at[i, "NW_Alt_K3"] * (1 - bt_sl)):
@@ -301,8 +364,13 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
 
 # ================= MOD 2: CANLI DCA TERMINAL MODU =================
 elif app_mode == "🖥️ Canlı DCA Terminal":
+    # Yan panel kilit kontrol butonları
     manual_lock = st.sidebar.toggle("🔒 Bekleyen Seviyeleri Dondur (El İle)", value=False, key="live_manual_lock_toggle")
     
+    if st.sidebar.button("🔔 Telegram Bağlantısını Test Et", key="live_telegram_test_button_unique"):
+        send_telegram_msg(f"👋 *Bağlantı Testi:* Web siteniz üzerinden gönderilen test mesajı başarılı!")
+        st.sidebar.success("Test mesajı gönderildi!")
+
     if st.sidebar.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="live_reset_all_positions_button"):
         st.session_state[f"{state_prefix}l_status"] = [False, False, False]
         st.session_state[f"{state_prefix}s_status"] = [False, False, False]
@@ -436,7 +504,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
 
             # SHORT GİRİŞLERİ
             for idx, th, val in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes):
-                if current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]:
+                if current_price >= th Cliff and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]:
                     st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
                     st.session_state[f"{state_prefix}s_crypto"] += val
                     st.session_state[f"{state_prefix}s_usd_spent"] += val * current_price
