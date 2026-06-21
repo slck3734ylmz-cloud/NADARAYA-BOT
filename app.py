@@ -20,7 +20,7 @@ def check_password():
     st.markdown("<h2 style='text-align: center; color: white; margin-top: 50px;'>🔒 DCA Terminal Güvenlik Girişi</h2>", unsafe_allow_html=True)
     col_login, _ = st.columns([1, 1.5])
     with col_login:
-        user_password = st.text_input("Lütfen sahsi siber güvenlik şifrenizi girin:", type="password", key="login_pass_key")
+        user_password = st.text_input("Lütfen şahsi siber güvenlik şifrenizi girin:", type="password", key="login_pass_key")
         if st.button("Giriş Yap", key="login_btn_key"):
             if user_password == "dca2026": 
                 st.session_state.password_correct = True
@@ -255,7 +255,7 @@ extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
 top_50_data = get_top_50_volume_coins()
 display_options = [item['display'] for item in top_50_data]
 
-# ================= MİMARİ DEĞİŞİKLİK: YAN PANEL NAVİGASYON SEÇİMİ =================
+# ================= YAN PANEL NAVİGASYON SEÇİMİ =================
 st.sidebar.title("🧭 Terminal Navigasyon")
 app_mode = st.sidebar.radio("Mod Seçin:", ["🖥️ Canlı DCA Terminal", "📊 Geriye Dönük Test (Backtest)"], key="global_app_mode_radio")
 
@@ -347,7 +347,7 @@ def send_telegram_msg(message):
     except:
         pass
 
-# NON-REPAINTING (NEDENSEL) NADARAYA-WATSON FİLTRESİ
+# NON-REPAINTING NADARAYA-WATSON FİLTRESİ
 def nadaraya_watson_estimator(src, h=8):
     n = len(src)
     estimates = np.zeros(n)
@@ -365,7 +365,7 @@ def calculate_nw_bands(df, std_multiplier, col_suffix):
     df[f"NW_Alt{col_suffix}"] = df["NW_Merkez"] - (std_multiplier * df["Sapma_Std"])
     return df
 
-# ================= MOD 1: GERİYE DÖNÜK TEST (BACKTEST) MODU (HİÇBİR DÖNGÜ İÇERMEZ, TEK SEFER ÇALIŞIR) =================
+# ================= MOD 1: GERİYE DÖNÜK TEST (BACKTEST) MODU =================
 if app_mode == "📊 Geriye Dönük Test (Backtest)":
     st.title("📊 Geriye Dönük Test (Backtest) Masası")
     st.write("Bu modül, seçtiğiniz borsa çifti için geçmiş fiyat mumlarını çekerek 3 kademeli DCA nedensel (non-repainting) zarf stratejisini simüle eder.")
@@ -373,13 +373,13 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
     col_bt1, col_bt2, col_bt3 = st.columns(3)
     bt_tf = col_bt1.selectbox("Test Zaman Dilimi", ["5m", "15m", "1h", "4h"], index=2, key="backtest_tf_selector_unique")
     bt_limit = col_bt2.number_input("Test Edilecek Mum Sayısı", min_value=100, max_value=3000, value=1000, step=100, key="backtest_limit_unique")
-    bt_std = col_bt3.number_input("Nadaraya-Watson Std Sapma (Sapma Seviyesi)", min_value=1.5, max_value=4.0, value=3.0, step=0.1, key="backtest_std_unique")
+    bt_std = col_bt3.number_input("Nadaraya-Watson Std Sapma (Sapma Seviyesi)", min_value=1.5, max_value=4.0, value=3.0, step=0.1, key="backtest_std_input")
     
     col_bt4, col_bt5 = st.columns(2)
-    bt_tp = col_bt4.slider("Hedef Kar-Al Oranı (%)", min_value=0.2, max_value=5.0, value=1.0, step=0.1, key="backtest_tp_slider_unique") / 100.0
-    bt_sl = col_bt5.slider("3. Kademe Stop-Loss Oranı (%)", min_value=0.5, max_value=10.0, value=2.0, step=0.1, key="backtest_sl_slider_unique") / 100.0
+    bt_tp = col_bt4.slider("Hedef Kar-Al Oranı (%)", min_value=0.2, max_value=5.0, value=1.0, step=0.1, key="backtest_tp_slider") / 100.0
+    bt_sl = col_bt5.slider("3. Kademe Stop-Loss Oranı (%)", min_value=0.5, max_value=10.0, value=2.0, step=0.1, key="backtest_sl_slider") / 100.0
     
-    if st.button("▶️ Geriye Dönük Testi Çalıştır", key="backtest_run_button_unique"):
+    if st.button("▶️ Geriye Dönük Testi Çalıştır", key="backtest_run_button"):
         with st.spinner("Geçmiş veriler çekiliyor ve analiz ediliyor..."):
             try:
                 bt_raw = exchange.fetch_ohlcv(selected_symbol, bt_tf, limit=int(bt_limit))
@@ -405,10 +405,8 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                     close = row["Kapanis"]
                     t_time = row["Zaman"]
                     
-                    # LONG ÇIKIŞLARI
                     if sum(l_status) > 0:
                         l_tp_target = l_avg_price * (1 + bt_tp)
-                        
                         if l_status[2]:
                             l_stop_target = df_bt.at[i, "NW_Alt_K3"] * (1 - bt_sl)
                             if close <= l_stop_target:
@@ -421,7 +419,6 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                                 })
                                 l_crypto, l_usd_spent, l_avg_price = 0.0, 0.0, 0.0
                                 l_status = [False, False, False]
-                                
                         elif close >= l_tp_target:
                             pnl_usd = (l_crypto * close) - l_usd_spent
                             balance += l_crypto * close
@@ -433,7 +430,6 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                             l_crypto, l_usd_spent, l_avg_price = 0.0, 0.0, 0.0
                             l_status = [False, False, False]
                             
-                    # LONG GİRİŞLERİ
                     if close <= row["NW_Alt_K1"] and not l_status[0]:
                         buy_usd = initial_balance * 0.05
                         if balance >= buy_usd:
@@ -497,11 +493,15 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
             except Exception as ex:
                 st.error(f"Test sırasında hata meydana geldi: {ex}")
 
-# ================= MOD 2: CANLI DCA TERMINAL MODU (CANLI VERİLERİ VE RESAMPLE DİLİMLERİNİ DÖNGÜDE TAKİP EDER) =================
+# ================= MOD 2: CANLI DCA TERMINAL MODU =================
 elif app_mode == "🖥️ Canlı DCA Terminal":
     # Yan panel kilit kontrol butonları
     manual_lock = st.sidebar.toggle("🔒 Bekleyen Seviyeleri Dondur (El İle)", value=False, key="live_manual_lock_toggle")
     
+    if st.sidebar.button("🔔 Telegram Bağlantısını Test Et", key="live_telegram_test_button_unique"):
+        send_telegram_msg(f"👋 *Bağlantı Testi:* Web siteniz üzerinden gönderilen test mesajı başarılı!")
+        st.sidebar.success("Test mesajı gönderildi!")
+
     if st.sidebar.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="live_reset_all_positions_button"):
         st.session_state[f"{state_prefix}l_status"] = [False, False, False]
         st.session_state[f"{state_prefix}l_crypto"] = 0.0
@@ -516,7 +516,10 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
         save_state_to_db()
         st.rerun()
 
-    # Ekran Güncelleme Alanı
+    # HATA GİDERİCİ:countdown_placeholder nesnesi doğrudan Canlı DCA Terminal bloğunun içinde oluşturuldu.
+    st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
+    countdown_placeholder = st.sidebar.empty()
+
     main_container = st.empty()
 
     while True:
@@ -785,7 +788,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
 
-            # EKRAN GÜNCELLEMELERİ (Tamamen Salt Okunurdur, Döngüde ID Çakışması Oluşturmaz)
+            # EKRAN GÜNCELLEMELERİ
             with main_container.container():
                 col_left, col_right = st.columns([1.6, 1])
                 
@@ -838,6 +841,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                             ax3.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
                         if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                             ax3.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
+                        
                         ax3.legend(loc="upper left")
                         ax3.grid(True, color='white', alpha=0.03)
                         plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
@@ -936,23 +940,29 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                         st.write(f"**{s3_lbl}:** {s_k3_status}")
                         if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                             s_tp = st.session_state[f"{state_prefix}s_avg_price"] * 0.99
-                            st.success(f"🟢 **KAR-AL (%1):** `{s_tp:.2f}`")
-
-                    st.markdown("---")
-                    if st.session_state[f"{state_prefix}log_history"]:
-                        st.write("📜 **Son Sinyaller (Log)**")
-                        for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
-                            st.write(log)
+                            s_sl = nw_ust_4h * 1.02
+                            st.markdown(f"**Maliyet Ort :** `{st.session_state[f'{state_prefix}s_avg_price']:.2f} USDT`")
+                            st.success(f"🟢 **KAR-AL (%1):** `{s_tp:.2f} USDT` (Sinyal gelince karla kapatın!)")
+                            if st.session_state[f"{state_prefix}s_status"][2]:
+                                st.error(f"🚨 **ACİL STOP (%2):** `{s_sl:.2f} USDT` (Son Alımın %1 Üstü!)")
+                            else:
+                                st.warning(f"🛡️ **Emniyet (Stop):** `PASİF` (3. Kademeden Sonra)")
 
                 st.markdown("---")
-                st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
-                col_g, col_lo = st.columns(2)
-                with col_g:
-                    st.success("📈 EN ÇOK YÜKSELENLER")
-                    if not df_gainers.empty: st.table(df_gainers.reset_index(drop=True))
-                with col_lo:
-                    st.error("📉 EN ÇOK DÜŞENLER")
-                    if not df_losers.empty: st.table(df_losers.reset_index(drop=True))
+                if st.session_state[f"{state_prefix}log_history"]:
+                    st.write("📜 **Son Sinyaller (Log)**")
+                    for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
+                        st.write(log)
+
+            st.markdown("---")
+            st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
+            col_g, col_lo = st.columns(2)
+            with col_g:
+                st.success("📈 EN ÇOK YÜKSELENLER")
+                if not df_gainers.empty: st.table(df_gainers.reset_index(drop=True))
+            with col_lo:
+                st.error("📉 EN ÇOK DÜŞENLER")
+                if not df_losers.empty: st.table(df_losers.reset_index(drop=True))
 
         except Exception as e:
             st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
