@@ -156,7 +156,7 @@ def get_market_movers_and_funding():
                     base_vol = ticker.get('baseVolume') or 0.0
                     volume = base_vol * price
                 
-                # 2. Fonlama Oranı Verisi
+                # 2. Fonlama Oranı Verisi (Hata düzeltildi, tüm gereksiz kod kalıntıları silindi)
                 raw_info = ticker.get('info', {})
                 funding_val = raw_info.get('funding_rate')
                 fr_val = float(funding_val) * 100.0 if funding_val is not None else 0.0
@@ -269,12 +269,12 @@ st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
 selected_display = st.sidebar.selectbox("🔥 Vadeli Coin Seçin (Hacim Sıralı 50)", display_options)
 selected_symbol = [item['symbol'] for item in top_50_data if item['display'] == selected_display][0]
 
-# ================= SOL PANEL (SIDEBAR) FONLAMA ORANLARI YAZDIRMA =================
+# ================= SOL PANEL (SIDEBAR) FONLAMA ORANLARI YAZDIRMA (BUG GİDERİLDİ) =================
 st.sidebar.markdown("---")
 st.sidebar.subheader("💸 En Ekstrem Fonlama Oranları (Top 5)")
-extreme_rates_sb = get_extreme_funding_rates()
-if extreme_rates_sb:
-    for item in extreme_rates_sb:
+# BUG FIX: Get_extreme_funding_rates fonksiyonu yerine yukarıda hesaplanan extreme_rates değişkeni doğrudan okunur
+if extreme_rates:
+    for item in extreme_rates:
         rate_str = f"{item['rate']:+.4f}%"
         if item['rate'] < 0:
             st.sidebar.markdown(f"**{item['symbol']}**: :green[{rate_str}]")
@@ -393,7 +393,7 @@ main_container = st.empty()
 # Canlı Taramayı Başlat
 while True:
     try:
-        # =================== 1. HATA GEÇİRMEZ KÜRESEL 4H TREND HESAPLAMASI (HER İKİ MOD İÇİN ORTAK) ===================
+        # 1. Seçilen Vadeli Coin İçin Trend Hesaplama (4H)
         raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=210)
         df_4h = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_4h["EMA_200"] = df_4h["Kapanis"].ewm(span=200, adjust=False).mean()
@@ -411,19 +411,17 @@ while True:
         current_std = df_vol.iloc[-1]["std"]
         historical_median_std = df_vol["std"].median()
         
-        # Piyasa Durumu Kararı
         is_volatile = current_std > historical_median_std
         market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
         # 3. SEÇİLEN KODA GÖRE CANLI VERİLERİ VE RESAMPLE DİLİMLERİNİ HESAPLA
         if not is_volatile:
-            # SAKİN PİYASA (Sistem A: 1m / 5m / 15m) -> 1m master veri çekilir
+            # SAKİN PİYASA (Sistem A)
             raw_candles = exchange.fetch_ohlcv(selected_symbol, "1m", limit=1000)
             df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
             df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
             
-            # K1 (1m), K2 (5m), K3 (15m) NW Hesaplamaları (Birebir 3.0 Std)
-            df = calculate_nw_bands(df, 3.0, "_5m") # 1m master olduğu için sütun adları uyumluluğu
+            df = calculate_nw_bands(df, 3.0, "_5m")
             df_1h = df.resample("5min", on="Zaman").last().ffill().reset_index()
             df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
             df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h"]].sort_values("Zaman"), on="Zaman", direction="backward")
@@ -432,23 +430,20 @@ while True:
             df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
             df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h"]].sort_values("Zaman"), on="Zaman", direction="backward")
             
-            # 1d yedek hesaplama
             raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=100)
             df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
             df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
             df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
             
-            # Dinamik Kriter İsimleri
             l1_lbl, l2_lbl, l3_lbl = "Kademe 1 (1m)", "Kademe 2 (5m)", "Kademe 3 (15m)"
             s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (1m)", "Kademe 2 (5m)", "Kademe 3 (15m)"
             active_engine_name = "⏱️ SİSTEM A: ULTRA HIZLI SCALP (1m/5m/15m)"
         else:
-            # VOLATİL PİYASA (Sistem B: 5m / 1h / 4h) -> 5m master veri çekilir
+            # VOLATİL PİYASA (Sistem B)
             raw_candles = exchange.fetch_ohlcv(selected_symbol, "5m", limit=1000)
             df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
             df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
             
-            # K1 (5m), K2 (1h), K3 (4h) NW ve RSI Hesaplamaları
             df = calculate_nw_bands(df, 3.0, "_5m")
             delta = df["Kapanis"].diff()
             gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -471,7 +466,6 @@ while True:
             df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
             diff_4h = df_4h_res["Kapanis"].diff()
             up_4h = diff_4h.clip(lower=0)
-            # BUG FIX: 4h RSI matematiksel sapması giderildi (.clip eklendi)
             down_4h = -diff_4h.clip(upper=0)
             ma_up_4h = up_4h.rolling(14).mean()
             ma_down_4h = down_4h.rolling(14).mean()
@@ -513,19 +507,16 @@ while True:
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
             l_tp = st.session_state[f"{state_prefix}l_avg_price"] * (1 + target_profit_ratio)
             
-            # Kural: Stop-loss yalnızca 3. kademe alındıysa aktifleşir ve son alım fiyatının (NW_Alt_4h) %1 aşağısıdır
-            if st.session_state[f"{state_prefix}l_status"][2]:
-                l_stop = nw_alt_4h * (1 - stop_loss_ratio)
-                if current_price <= l_stop:
-                    st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                    msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f} (Son Alımın %1 Altı)"
-                    send_telegram_msg(msg)
-                    st.session_state[f"{state_prefix}log_history"].append(msg)
-                    st.session_state[f"{state_prefix}l_crypto"] = 0.0
-                    st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
-                    st.session_state[f"{state_prefix}l_avg_price"] = 0.0
-                    st.session_state[f"{state_prefix}l_status"] = [False, False, False]
-                    save_state_to_db()
+            if st.session_state[f"{state_prefix}l_status"][2] and current_price <= l_stop:
+                st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
+                msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f} (Son Alımın %1 Altı)"
+                send_telegram_msg(msg)
+                st.session_state[f"{state_prefix}log_history"].append(msg)
+                st.session_state[f"{state_prefix}l_crypto"] = 0.0
+                st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
+                st.session_state[f"{state_prefix}l_avg_price"] = 0.0
+                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                save_state_to_db()
 
             elif current_price >= l_tp:
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
@@ -734,14 +725,14 @@ while True:
                     if not df_long_liq.empty:
                         st.table(df_long_liq.reset_index(drop=True))
                     else:
-                        st.write("Likidasyon verileri yükleniyor...")
+                        st.write("Veriler yükleniyor...")
                         
                 with col_liq_s:
                     st.error("🟢 SHORT LİKİDASYON HAVUZLARI")
                     if not df_short_liq.empty:
                         st.table(df_short_liq.reset_index(drop=True))
                     else:
-                        st.write("Likidasyon verileri yükleniyor...")
+                        st.write("Veriler yükleniyor...")
 
             # --- SAĞ SÜTUN (KONTROL MASASI VE GÖSTERGELER) ---
             with col_right:
@@ -797,7 +788,7 @@ while True:
                     else:
                         st.write("Iraksama: *Yok*")
                 
-                # DCA Sinyal Takip ve Yönetim Kartı
+                # DCA Sinyal Takip ve Yönetim Kartı (METRİK KARTLI VE RENKLİ KUTULU ULTRA PROFESYONEL TASARIM)
                 st.markdown("---")
                 st.write("🎯 **Canlı Sinyal Takip ve DCA Yönetim Kartı**")
                 col_l, col_s = st.columns(2)
@@ -810,15 +801,20 @@ while True:
                     st.write(f"**{l1_lbl}:** {k1_status}")
                     st.write(f"**{l2_lbl}:** {k2_status}")
                     st.write(f"**{l3_lbl}:** {k3_status}")
+                    
                     if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                         l_tp = st.session_state[f"{state_prefix}l_avg_price"] * 1.01
                         l_sl = nw_alt_4h * 0.99
-                        st.markdown(f"**Maliyet Ort :** `{st.session_state[f'{state_prefix}l_avg_price']:.2f} USDT`")
-                        st.success(f"🟢 **KAR-AL (%1):** `{l_tp:.2f} USDT` (Sinyal gelince karla satın!)")
+                        
+                        st.markdown("---")
+                        col_lm1, col_lm2 = st.columns(2)
+                        col_lm1.metric(label="Long Ortalama Giriş", value=f"${st.session_state[f'{state_prefix}l_avg_price']:.2f}")
+                        col_lm2.metric(label="Hedef Kar-Al (+1%)", value=f"${l_tp:.2f}", delta="+1.00%", delta_color="normal")
+                        
                         if st.session_state[f"{state_prefix}l_status"][2]:
                             st.error(f"🚨 **ACİL STOP (%2):** `{l_sl:.2f} USDT` (Son Alımın %1 Altı!)")
                         else:
-                            st.warning(f"🛡️ **Emniyet (Stop):** `PASİF` (3. Kademeden Sonra)")
+                            st.warning("🛡️ **Emniyet (Stop):** `PASİF` (3. Kademeden Sonra)")
 
                 with col_s:
                     st.error("📉 SHORT KADEMELERİ")
@@ -828,15 +824,20 @@ while True:
                     st.write(f"**{s1_lbl}:** {s_k1_status}")
                     st.write(f"**{s2_lbl}:** {s_k2_status}")
                     st.write(f"**{s3_lbl}:** {s_k3_status}")
+                    
                     if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                         s_tp = st.session_state[f"{state_prefix}s_avg_price"] * 0.99
                         s_sl = nw_ust_4h * 1.02
-                        st.markdown(f"**Maliyet Ort :** `{st.session_state[f'{state_prefix}s_avg_price']:.2f} USDT`")
-                        st.success(f"🟢 **KAR-AL (%1):** `{s_tp:.2f} USDT` (Sinyal gelince karla kapatın!)")
+                        
+                        st.markdown("---")
+                        col_sm1, col_sm2 = st.columns(2)
+                        col_sm1.metric(label="Short Ortalama Giriş", value=f"${st.session_state[f'{state_prefix}s_avg_price']:.2f}")
+                        col_sm2.metric(label="Hedef Kar-Al (%1)", value=f"${s_tp:.2f}", delta="-1.00%", delta_color="normal")
+                        
                         if st.session_state[f"{state_prefix}s_status"][2]:
                             st.error(f"🚨 **ACİL STOP (%2):** `{s_sl:.2f} USDT` (Son Alımın %1 Üstü!)")
                         else:
-                            st.warning(f"🛡️ **Emniyet (Stop):** `PASİF` (3. Kademeden Sonra)")
+                            st.warning("🛡️ **Emniyet (Stop):** `PASİF` (3. Kademeden Sonra)")
                 
                 # Son Sinyaller
                 st.markdown("---")
