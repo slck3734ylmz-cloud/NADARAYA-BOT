@@ -15,28 +15,34 @@ telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "665969213"
 # =========================================================================
 
-# BINANCE FUTURES (USDT-M) BAĞLANTISI (Kraken yerine Binance Vadeli İşlemlere geçtik)
+# BINANCE FUTURES (USDT-M) BAĞLANTISI
 exchange = ccxt.binanceusdm()
 
-# ================= BİNANCE FUTURES EN YÜKSEK HACİMLİ 50 PERPETUAL TARAYICI =================
+# ================= ULTRA-GÜVENLİ BİNANCE FUTURES 50 PERPETUAL TARAYICI =================
 @st.cache_data(ttl=300)  # Listeyi 5 dakikada bir günceller
 def get_top_50_volume_coins():
     try:
         tickers = exchange.fetch_tickers()
         usd_tickers = []
         for symbol, ticker in tickers.items():
-            # Sadece USDT teminatlı Sürekli Vadeli (Perpetual - .P) kontratları filtrele
             if symbol.endswith(':USDT'):
-                volume = ticker.get('quoteVolume', 0)  # USDT bazında 24 saatlik hacim
-                if volume > 0:
-                    usd_tickers.append({'symbol': symbol, 'volume': volume})
+                # Boş veri kontrolü (None-guard)
+                quote_vol = ticker.get('quoteVolume')
+                if quote_vol is None:
+                    base_vol = ticker.get('baseVolume') or 0.0
+                    last_price = ticker.get('last') or ticker.get('close') or 0.0
+                    quote_vol = base_vol * last_price
+                
+                if quote_vol is not None and quote_vol > 0:
+                    usd_tickers.append({'symbol': symbol, 'volume': quote_vol})
         
-        # Hacme göre büyükten küçüğe sırala
+        if len(usd_tickers) == 0:
+            return ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]
+            
         usd_tickers.sort(key=lambda x: x['volume'], reverse=True)
         top_50 = [item['symbol'] for item in usd_tickers[:50]]
         return top_50
     except Exception as e:
-        # Hata durumunda varsayılan sürekli vadeli listeyi döndürür
         return ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "DOGE/USDT:USDT"]
 # ==========================================================================================
 
@@ -47,7 +53,7 @@ top_50_coins = get_top_50_volume_coins()
 st.sidebar.title("💳 Cüzdan Durumu")
 st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
 
-# COİN SEÇİM KUTUSU (Binance Vadeli İşlemler Hacim Sıralı 50 Sürekli Kontrat)
+# COİN SEÇİM KUTUSU
 selected_symbol = st.sidebar.selectbox("🔥 İşlem Yapılacak Vadeli Coin (Top 50)", top_50_coins)
 
 # Seçilen coinin durum değişkenleri (Her coin için bağımsız session_state saklanır)
@@ -65,10 +71,10 @@ if f"{state_prefix}balance_usd" not in st.session_state:
     st.session_state[f"{state_prefix}s_avg_price"] = 0.0
     st.session_state[f"{state_prefix}log_history"] = []
 
-# Seçilen coinin fiyatına göre kademe adetlerini dinamik ölçeklendiriyoruz
+# Seçilen coinin fiyatına göre kademe adetlerini dinamik ölçeklendiriyoruz (Ultra-Güvenli)
 try:
     ticker_info = exchange.fetch_ticker(selected_symbol)
-    coin_price = ticker_info['last']
+    coin_price = ticker_info.get('last') or ticker_info.get('close') or 63000.0
     scale_factor = 63000.0 / coin_price
     layer_sizes = [0.0001 * scale_factor, 0.0002 * scale_factor, 0.0012 * scale_factor]
 except:
@@ -126,7 +132,7 @@ while True:
         trend_4h = "YUKARI (BOĞA)" if latest_4h_close > latest_4h_ema else "AŞAĞI (AYI)"
         warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
 
-        # 2. Seçilen Vadeli Coin İçin Canlı Verileri Al (Limit 600)
+        # 2. Canlı 15m/30m/2h Verilerini Al (Limit 600)
         raw_candles = exchange.fetch_ohlcv(selected_symbol, "15m", limit=600)
         df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
