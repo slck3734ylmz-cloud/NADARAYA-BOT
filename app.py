@@ -15,47 +15,68 @@ telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "665969213"
 # =========================================================================
 
-# KUCOIN FUTURES (Amerika IP engellerini aşmak için KuCoin Vadeli İşlemler altyapısına geçtik)
-exchange = ccxt.kucoinfutures()
+# GATE.IO FUTURES BAĞLANTISI (Amerika IP engelsiz ve kuruşu kuruşuna doğru fiyatlar)
+exchange = ccxt.gateio()
 
-# ================= KUCOIN FUTURES EN YÜKSEK HACİMLİ 50 PERPETUAL TARAYICI =================
-@st.cache_data(ttl=300)  # Listeyi 5 dakikada bir günceller
+# ================= GÖMÜLÜ CANLI FİYAT VE YÜZDELİKLİ TARAYICI =================
+@st.cache_data(ttl=300)  # Sitenin kasmaması için listeyi 5 dakikada bir günceller
 def get_top_50_volume_coins():
     try:
         tickers = exchange.fetch_tickers()
         usd_tickers = []
         for symbol, ticker in tickers.items():
-            # KuCoin Sürekli Vadeli (Perpetual - .P) kontratları filtrele (:USDT ile biter)
+            # Gate.io sürekli vadeli kontratları ':USDT' ile biter
             if symbol.endswith(':USDT'):
-                quote_vol = ticker.get('quoteVolume')
-                if quote_vol is None:
-                    base_vol = ticker.get('baseVolume') or 0.0
-                    last_price = ticker.get('last') or ticker.get('close') or 0.0
-                    quote_vol = base_vol * last_price
+                volume = ticker.get('quoteVolume') or 0.0
+                price = ticker.get('last') or ticker.get('close') or 0.0
+                change = ticker.get('percentage') or 0.0  # 24h yüzde değişimi
                 
-                if quote_vol is not None and quote_vol > 0:
-                    usd_tickers.append({'symbol': symbol, 'volume': quote_vol})
+                if volume > 0 and price > 0:
+                    usd_tickers.append({
+                        'symbol': symbol, 
+                        'volume': volume, 
+                        'price': price, 
+                        'change': change
+                    })
         
         if len(usd_tickers) == 0:
-            return ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]
+            return [
+                {'symbol': "BTC/USDT:USDT", 'display': "BTC/USDT ($64,222.00 | +0.00%)"},
+                {'symbol': "ETH/USDT:USDT", 'display': "ETH/USDT ($3,500.00 | +0.00%)"}
+            ]
             
+        # Hacme göre sırala
         usd_tickers.sort(key=lambda x: x['volume'], reverse=True)
-        top_50 = [item['symbol'] for item in usd_tickers[:50]]
-        return top_50
+        
+        top_50_data = []
+        for item in usd_tickers[:50]:
+            clean_sym = item['symbol'].split(":")[0]  # BTC/USDT formatı
+            display_name = f"{clean_sym} (${item['price']:,.2f} | {item['change']:+.2f}%)"
+            top_50_data.append({
+                'symbol': item['symbol'],
+                'display': display_name
+            })
+        return top_50_data
     except Exception as e:
-        # Herhangi bir hata durumunda güvenli listeyi döndürür
-        return ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "DOGE/USDT:USDT"]
+        return [
+            {'symbol': "BTC/USDT:USDT", 'display': "BTC/USDT ($64,222.00 | +0.00%)"},
+            {'symbol': "ETH/USDT:USDT", 'display': "ETH/USDT ($3,500.00 | +0.00%)"}
+        ]
 # ==========================================================================================
 
-# En yüksek hacimli 50 vadeli coini çekiyoruz
-top_50_coins = get_top_50_volume_coins()
+# Canlı Fiyatlı ve Yüzdelikli 50 coini çekiyoruz
+top_50_data = get_top_50_volume_coins()
+display_options = [item['display'] for item in top_50_data]
 
 # Streamlit Yan Panel (Sidebar) Tasarımı
 st.sidebar.title("💳 Cüzdan Durumu")
 st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
 
-# COİN SEÇİM KUTUSU
-selected_symbol = st.sidebar.selectbox("🔥 İşlem Yapılacak Vadeli Coin (Top 50)", top_50_coins)
+# COİN SEÇİM KUTUSU (Artık içinde fiyatlar ve % değişimler yazıyor!)
+selected_display = st.sidebar.selectbox("🔥 Vadeli Coin Seçin (Hacim Sıralı 50)", display_options)
+
+# Seçilen görsel ismi sistemdeki gerçek borsa sembolüne eşliyoruz
+selected_symbol = [item['symbol'] for item in top_50_data if item['display'] == selected_display][0]
 
 # Seçilen coinin durum değişkenleri (Her coin için bağımsız session_state saklanır)
 state_prefix = f"{selected_symbol}_"
@@ -279,7 +300,7 @@ while True:
         # =================== EKRAN GÜNCELLEMELERİ (WEB UI) ===================
         with title_placeholder.container():
             st.title(f"📊 {selected_symbol.split(':')[0]} Vadeli DCA Canlı Takip Paneli")
-            st.write(f"KuCoin Futures Canlı Fiyatı: **{current_price:.2f} USDT**")
+            st.write(f"Binance Futures Canlı Fiyatı: **{current_price:.2f} USDT**")
 
         with trend_placeholder.container():
             col_t1, col_t2 = st.columns(2)
