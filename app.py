@@ -35,6 +35,9 @@ if not check_password():
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
+# Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz
+plt.style.use('dark_background')
+
 # ================= ENTEGRE EDİLMİŞ TELEGRAM VE VERİTABANI AYARLARINIZ =================
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
@@ -951,4 +954,22 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
                 col_g, col_lo = st.columns(2)
                 with col_g:
-                    st.su
+                    st.success("📈 EN ÇOK YÜKSELENLER")
+                    if not df_gainers.empty: st.table(df_gainers.reset_index(drop=True))
+                with col_lo:
+                    st.error("📉 EN ÇOK DÜŞENLER")
+                    if not df_losers.empty: st.table(df_losers.reset_index(drop=True))
+
+                st.markdown("---")
+                if st.session_state[f"{state_prefix}log_history"]:
+                    st.write("📜 **Son Sinyaller (Log)**")
+                    for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
+                        st.write(log)
+
+        except Exception as e:
+            st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
+            
+        for remaining in range(10, 0, -1):
+            countdown_placeholder.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
+            time.sleep(1)
+        countdown_placeholder.write("🔄 Taranıyor...")
