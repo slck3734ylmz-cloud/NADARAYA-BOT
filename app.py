@@ -29,7 +29,7 @@ if not check_password():
     st.stop()
 # =========================================================================
 
-# Streamlit sayfa yapılandırması
+# Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
 # ================= FLICKER-FREE (KIPIRDAMASIZ) CSS ENJEKSİYONU =================
@@ -188,8 +188,12 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
     fig.update_layout(title=title, template="plotly_dark", xaxis_title="Zaman", yaxis_title="Fiyat (USDT)", margin=dict(l=20, r=20, t=40, b=20), height=400)
     return fig
 
-# ================= VERİ GÜNCELLEMELERİ VE CÜZDAN =================
+# ================= KÜRESEL GÖSTERGELERİN TETİKLENMESİ =================
+# HATA GİDERİCİ: Global değişkenler eksiksiz tanımlandı
+extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
 top_50_data = get_top_50_volume_coins()
+
+# ================= YAN PANEL AYARLARI =================
 selected_display = st.sidebar.selectbox("🔥 Vadeli Coin Seçin", [x['display'] for x in top_50_data], key="sidebar_coin_selectbox_global")
 selected_symbol = [x['symbol'] for x in top_50_data if x['display'] == selected_display][0]
 coin_title = selected_symbol.split(':')[0]
@@ -275,7 +279,9 @@ if st.sidebar.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="live_reset_al
 st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
 countdown_placeholder = st.sidebar.empty()
 
-# ================= VERİ TOPLAMA VE HESAPLAMA =================
+main_container = st.empty()
+
+# ================= CANLI TAKİP VE VERİ İŞLEME =================
 try:
     live_ticker = exchange.fetch_ticker(selected_symbol)
     current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
@@ -405,7 +411,7 @@ try:
             st.session_state[f"{state_prefix}log_history"].append(msg)
             save_state_to_db()
 
-    # ARAYÜZÜ DOĞRUDAN ÇİZİYORUZ
+    # ARAYÜZÜ ÇİZİYORUZ
     col_left, col_right = st.columns([1.6, 1])
     
     with col_left:
