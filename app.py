@@ -6,32 +6,6 @@ import time
 import requests
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from supabase import create_client, Client
-
-# ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
-def check_password():
-    """Doğru şifre girilmeden hiçbir veritabanı veya borsa verisi yüklenmez."""
-    if "password_correct" not in st.session_state:
-        st.session_state.password_correct = False
-    
-    if st.session_state.password_correct:
-        return True
-        
-    st.markdown("<h2 style='text-align: center; color: white; margin-top: 50px;'>🔒 DCA Terminal Güvenlik Girişi</h2>", unsafe_allow_html=True)
-    col_login, _ = st.columns([1, 1.5])
-    with col_login:
-        user_password = st.text_input("Lütfen şahsi siber güvenlik şifrenizi girin:", type="password")
-        if st.button("Giriş Yap"):
-            if user_password == "dca2026": 
-                st.session_state.password_correct = True
-                st.rerun()
-            else:
-                st.error("❌ Hatalı Şifre! Erişim reddedildi.")
-    return False
-
-if not check_password():
-    st.stop()  # Şifre yanlışsa kodun geri kalanının çalışmasını durdurur
-# =========================================================================
 
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
@@ -249,7 +223,6 @@ def estimate_liquidation_pools(symbol):
         return pd.DataFrame(long_pools), pd.DataFrame(short_pools)
     except:
         return pd.DataFrame(), pd.DataFrame()
-# =============================================================================================
 
 # Veritabanını yormamak için toplu borsa analizi tek seferde çekilir
 extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
@@ -421,7 +394,7 @@ while True:
         ma_up_1h = up_1h.rolling(14).mean()
         ma_down_1h = down_1h.rolling(14).mean()
         rs_1h = ma_up_1h / ma_down_1h
-        df_1h["RSI_14_1h"] = 100 - (100 / (1 + rs_1h))  # BUG FIX: Benzersiz sütun ismi verildi
+        df_1h["RSI_14_1h"] = 100 - (100 / (1 + rs_1h))
         df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h", "RSI_14_1h"]].sort_values("Zaman"), on="Zaman", direction="backward")
 
         # 4h resample ve NW hesaplama (Sapma: 3.0)
@@ -433,7 +406,7 @@ while True:
         ma_up_4h = up_4h.rolling(14).mean()
         ma_down_4h = down_4h.rolling(14).mean()
         rs_4h = ma_up_4h / ma_down_4h
-        df_4h_res["RSI_14_4h"] = 100 - (100 / (1 + rs_4h))  # BUG FIX: Benzersiz sütun ismi verildi
+        df_4h_res["RSI_14_4h"] = 100 - (100 / (1 + rs_4h))
         df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h", "RSI_14_4h"]].sort_values("Zaman"), on="Zaman", direction="backward")
 
         # 1 günlük (1d) grafik için veri çekme
@@ -599,7 +572,7 @@ while True:
         with main_container.container():
             col_left, col_right = st.columns([1.6, 1])
             
-            # --- SOL SÜTUN (SADECE GRAFİKLER) ---
+            # --- SOL SÜTUN (GRAFİKLER VE LİKİDASYON HARİTASI) ---
             with col_left:
                 st.subheader("📈 Canlı Fiyat ve Nadaraya-Watson Zarf Grafikleri")
                 tab_5m, tab_1h, tab_4h, tab_1d = st.tabs(["⏱️ 5 Dakikalık Grafik", "⏱️ 1 Saatlik Grafik", "⏱️ 4 Saatlik Grafik", "🌎 1 Günlük Grafik"])
@@ -677,6 +650,26 @@ while True:
                     st.pyplot(fig4)
                     plt.close(fig4)
 
+                # =================== LİKİDASYON HARİTASI (SOL SÜTUNA ALINDI - SIFIR KAYDIRMA) ===================
+                st.markdown("---")
+                st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
+                st.write("Fiyat hareketleri ve hacim birikimlerine göre kaldıraçlı pozisyonların (25x, 50x, 100x) tahmini likidasyon seviyeleri.")
+                col_liq_l, col_liq_s = st.columns(2)
+                
+                with col_liq_l:
+                    st.info("🔴 LONG LİKİDASYON HAVUZLARI (DESTEK SEVİYELERİ)")
+                    if not df_long_liq.empty:
+                        st.table(df_long_liq.reset_index(drop=True))
+                    else:
+                        st.write("Likidasyon verileri yükleniyor...")
+                        
+                with col_liq_s:
+                    st.error("🟢 SHORT LİKİDASYON HAVUZLARI (DİRENÇ SEVİYELERİ)")
+                    if not df_short_liq.empty:
+                        st.table(df_short_liq.reset_index(drop=True))
+                    else:
+                        st.write("Likidasyon verileri yükleniyor...")
+
             # --- SAĞ SÜTUN (KONTROL MASASI VE GÖSTERGELER) ---
             with col_right:
                 st.subheader(f"📊 {selected_symbol.split(':')[0]} Canlı Terminal")
@@ -744,10 +737,13 @@ while True:
                     st.write(f"**K3 (4h):** {k3_status}")
                     if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                         l_tp = st.session_state[f"{state_prefix}l_avg_price"] * 1.01
-                        l_sl = nw_alt_4h * 0.99 if st.session_state[f"{state_prefix}l_status"][2] else "PASİF (3. Kademeden Sonra)"
-                        st.write(f"**Ort. Giriş:** {st.session_state[f'{state_prefix}l_avg_price']:.2f}")
-                        st.write(f"🟢 **Kar-Al (%1):** {l_tp:.2f}")
-                        st.write(f"🔴 **Stop (%2):** {f'{l_sl:.2f}' if isinstance(l_sl, float) else l_sl}")
+                        l_sl = nw_alt_4h * 0.99
+                        st.markdown(f"**Maliyet Ort :** `{st.session_state[f'{state_prefix}l_avg_price']:.2f} USDT`")
+                        st.success(f"🟢 **KAR-AL (%1):** `{l_tp:.2f} USDT` (Sinyal gelince karla satın!)")
+                        if st.session_state[f"{state_prefix}l_status"][2]:
+                            st.error(f"🚨 **ACİL STOP (%2):** `{l_sl:.2f} USDT` (Son Alımın %1 Altı!)")
+                        else:
+                            st.warning(f"🛡️ **Emniyet (Stop):** `PASİF` (3. Kademeden Sonra)")
 
                 with col_s:
                     st.error("📉 SHORT KADEMELERİ")
@@ -759,10 +755,13 @@ while True:
                     st.write(f"**K3 (4h):** {s_k3_status}")
                     if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                         s_tp = st.session_state[f"{state_prefix}s_avg_price"] * 0.99
-                        s_sl = nw_ust_4h * 1.02 if st.session_state[f"{state_prefix}s_status"][2] else "PASİF (3. Kademeden Sonra)"
-                        st.write(f"**Ort. Giriş:** {st.session_state[f'{state_prefix}s_avg_price']:.2f}")
-                        st.write(f"🟢 **Kar-Al (%1):** {s_tp:.2f}")
-                        st.write(f"🔴 **Stop (%2):** {f'{s_sl:.2f}' if isinstance(s_sl, float) else s_sl}")
+                        s_sl = nw_ust_4h * 1.02
+                        st.markdown(f"**Maliyet Ort :** `{st.session_state[f'{state_prefix}s_avg_price']:.2f} USDT`")
+                        st.success(f"🟢 **KAR-AL (%1):** `{s_tp:.2f} USDT` (Sinyal gelince karla kapatın!)")
+                        if st.session_state[f"{state_prefix}s_status"][2]:
+                            st.error(f"🚨 **ACİL STOP (%2):** `{s_sl:.2f} USDT` (Son Alımın %1 Üstü!)")
+                        else:
+                            st.warning(f"🛡️ **Emniyet (Stop):** `PASİF` (3. Kademeden Sonra)")
                 
                 # Son Sinyaller
                 st.markdown("---")
@@ -771,7 +770,7 @@ while True:
                     for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
                         st.write(log)
 
-            # --- GÜNLÜK PİYASA LİDERLERİ TABLOLARI ---
+            # --- GÜNLÜK PİYASA LİDERLERİ TABLOLARI (SAYFA EN ALTINA ALINDI) ---
             st.markdown("---")
             st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
             col_g, col_lo = st.columns(2)
