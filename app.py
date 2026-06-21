@@ -35,6 +35,9 @@ if not check_password():
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
+# Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz
+plt.style.use('dark_background')
+
 # ================= ENTEGRE EDİLMİŞ TELEGRAM VE VERİTABANI AYARLARINIZ =================
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
@@ -510,7 +513,6 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                     col_r3.metric("Win Rate (Kazanma Oranı)", f"%{win_rate:.1f}")
                     col_r4.metric("Toplam İşlem", f"{len(df_trades)}")
                     
-                    # Backtest Grafiği interaktif Plotly grafiğine dönüştürüldü (NameError plt hatası çözüldü)
                     fig_bt = go.Figure()
                     fig_bt.add_trace(go.Scatter(x=df_equity["Zaman"], y=df_equity["Bakiye"], name="Bakiye Gelişimi (Equity)", line=dict(color="gold", width=2.5)))
                     fig_bt.add_hline(y=initial_balance, line=dict(color="white", width=1, dash="dash"))
@@ -535,7 +537,7 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
 
 # ================= MOD 2: CANLI DCA TERMINAL MODU =================
 elif app_mode == "🖥️ Canlı DCA Terminal":
-    # Yan panel kilit kontrol butonları
+    # Yan panel kilit kontrol butonları - Döngünün dışındaki güvenli dondurma butonu
     manual_lock = st.sidebar.toggle("🔒 Bekleyen Seviyeleri Dondur (El İle)", value=False, key="live_manual_lock_toggle")
     
     if st.sidebar.button("🔔 Telegram Bağlantısını Test Et", key="live_telegram_test_button_unique"):
@@ -945,7 +947,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                             else:
                                 st.warning(f"🛡️ **Emniyet (Stop):** `PASİF` (3. Kademeden Sonra)")
 
-                # HATA GİDERİCİ: Günlük Piyasa Liderleri Tabloları container kapsamına alındı (Yığılma önlendi)
+                # Günlük Piyasa Liderleri Tabloları container kapsamına alındı (Yığılma önlendi)
                 st.markdown("---")
                 st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
                 col_g, col_lo = st.columns(2)
@@ -961,22 +963,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.write("📜 **Son Sinyaller (Log)**")
                     for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
                         st.write(log)
-
-            # SIFIRLAMA BUTONU
-            st.markdown("---")
-            if st.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="reset_all_positions_button"):
-                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
-                st.session_state[f"{state_prefix}l_crypto"] = 0.0
-                st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
-                st.session_state[f"{state_prefix}l_avg_price"] = 0.0
-                st.session_state[f"{state_prefix}s_status"] = [False, False, False]
-                st.session_state[f"{state_prefix}s_crypto"] = 0.0
-                st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
-                st.session_state[f"{state_prefix}s_avg_price"] = 0.0
-                st.session_state[f"{state_prefix}balance_usd"] = 100.0
-                st.session_state[f"{state_prefix}locked_prices"] = None
-                save_state_to_db()
-                st.rerun()
 
         except Exception as e:
             st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
