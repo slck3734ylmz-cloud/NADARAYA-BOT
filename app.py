@@ -35,6 +35,9 @@ if not check_password():
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
+# Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz
+plt.style.use('dark_background')
+
 # ================= ENTEGRE EDİLMİŞ TELEGRAM VE VERİTABANI AYARLARINIZ =================
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
@@ -392,7 +395,7 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
         template="plotly_dark",
         xaxis_title="Zaman",
         yaxis_title="Fiyat (USDT)",
-        hovermode="x unified",  # İmlecin fiyata göre koordinatları canlı takip etmesini sağlar (İmleç sorunu çözüldü)
+        hovermode="x unified",  # İmlecin fiyata göre koordinatları canlı takip etmesini sağlar
         margin=dict(l=20, r=20, t=40, b=20),
         height=400,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -597,7 +600,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             df_5m = calculate_nw_bands(df_5m, 3.0, "_5m")
             df_5m["RSI"] = calculate_rsi(df_5m["Kapanis"])
 
-            # 15 Dakikalık resample ve hesaplamalar (Eklendi)
+            # 15 Dakikalık resample ve hesaplamalar
             df_15m = df_1m.resample('15min', on='Zaman').agg({'Acilis':'first', 'Yuksek':'max', 'Dusuk':'min', 'Kapanis':'last', 'Hacim':'sum'}).reset_index()
             df_15m = calculate_nw_bands(df_15m, 3.0, "_15m")
             df_15m["RSI"] = calculate_rsi(df_15m["Kapanis"])
@@ -667,7 +670,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 nw_ust_1h = dyn_ust_1h
                 nw_ust_4h = dyn_ust_4h
             
-            # Anlık RSI momentum değerleri (Eksiklikler hesaplandı)
+            # Anlık RSI momentum değerleri
             rsi_1m_val = df_1m.iloc[-1]["RSI"]
             rsi_5m_val = df_5m.iloc[-1]["RSI"]
             rsi_15m_val = df_15m.iloc[-1]["RSI"]
@@ -810,13 +813,12 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
 
-            # EKRAN GÜNCELLEMELERİ (PLOTLY ETKİLEŞİMLİ GRAFİKLER)
+            # EKRAN GÜNCELLEMELERİ
             with main_container.container():
                 col_left, col_right = st.columns([1.6, 1])
                 
                 with col_left:
                     st.subheader("📈 Canlı Fiyat ve Nadaraya-Watson Zarf Grafikleri")
-                    # Sekmeler güncellendi (1 Dakika ve 15 Dakika eklendi)
                     tab_1m, tab_5m, tab_15m, tab_1h, tab_4h, tab_1d = st.tabs([
                         "⏱️ 1m", "⏱️ 5m", "⏱️ 15m", "⏱️ 1h", "⏱️ 4h", "🌎 1d"
                     ])
@@ -833,7 +835,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                             st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']
                         ), use_container_width=True)
 
-                    with tab_15m: # 15 Dakikalık sekme hatası giderildi ve entegre edildi
+                    with tab_15m:
                         st.plotly_chart(draw_plotly_chart(
                             df_15m.tail(100), "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15 Dakikalık Grafik",
                             st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']
@@ -890,7 +892,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     else:
                         col_t2.error(f"🛡️ Emniyet: {warning_msg}")
                     
-                    # =================== GÜNCELLENEN RSI MOMENTUM SÜZGECİ (TÜM GÖSTERGELER AKTİFLEŞTİRİLDİ) ===================
                     st.markdown("---")
                     st.write("⚡ **RSI & Momentum Süzgeci (Tüm Zaman Dilimleri)**")
                     col_rsi_a, col_rsi_b, col_rsi_c = st.columns(3)
@@ -909,7 +910,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                         st.code(f"{rsi_15m_val:.1f}")
                         st.write("**1d (Ana Trend)**")
                         st.code(f"{rsi_1d_val:.1f}")
-                    # ==========================================================================================================
                     
                     st.markdown("---")
                     st.write("🎯 **Canlı Sinyal DCA Yönetim Kartı**")
@@ -945,21 +945,22 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                             else:
                                 st.warning(f"🛡️ **Emniyet (Stop):** `PASİF` (3. Kademeden Sonra)")
 
+                # HATA GİDERİCİ: Günlük Piyasa Liderleri Tabloları container kapsamına alındı (Yığılma önlendi)
+                st.markdown("---")
+                st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
+                col_g, col_lo = st.columns(2)
+                with col_g:
+                    st.success("📈 EN ÇOK YÜKSELENLER")
+                    if not df_gainers.empty: st.table(df_gainers.reset_index(drop=True))
+                with col_lo:
+                    st.error("📉 EN ÇOK DÜŞENLER")
+                    if not df_losers.empty: st.table(df_losers.reset_index(drop=True))
+
                 st.markdown("---")
                 if st.session_state[f"{state_prefix}log_history"]:
                     st.write("📜 **Son Sinyaller (Log)**")
                     for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
                         st.write(log)
-
-            st.markdown("---")
-            st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
-            col_g, col_lo = st.columns(2)
-            with col_g:
-                st.success("📈 EN ÇOK YÜKSELENLER")
-                if not df_gainers.empty: st.table(df_gainers.reset_index(drop=True))
-            with col_lo:
-                st.error("📉 EN ÇOK DÜŞENLER")
-                if not df_losers.empty: st.table(df_losers.reset_index(drop=True))
 
         except Exception as e:
             st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
