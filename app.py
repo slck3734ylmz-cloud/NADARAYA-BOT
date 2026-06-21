@@ -174,7 +174,7 @@ def calculate_nw_bands(df, std_multiplier, col_suffix):
     df[f"NW_Alt{col_suffix}"] = df["NW_Merkez"] - (std_multiplier * df["Sapma_Std"])
     return df
 
-# ================= EN SON PROBLEM: GÖLGELENDİRMELİ VE MUM GRAFİKLİ PROFESYONEL ÇİZİCİ =================
+# ================= EN SON GÖRSEL GELİŞTİRME: ÇERCEVELİ VE MUM GRAFİKLİ PROFESYONEL ÇİZİCİ =================
 def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l_avg=0.0, s_avg=0.0):
     fig = go.Figure()
     
@@ -225,8 +225,27 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
         height=400, 
         xaxis_rangeslider_visible=False, # Alttaki gereksiz barı gizleyerek sıkışmayı önler
         hovermode="x unified", # Fareyle gelindiğinde tüm verileri asil bir bilgi kartında toplar
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5) # Lejantı alta alarak üstteki çakışmayı giderdik
     )
+    
+    # Grafiğin etrafını asil bir kutu gibi çevreleyen borsa tipi ince beyaz eksen çerçeveleri (mirror=True):
+    fig.update_xaxes(
+        showgrid=True, 
+        gridcolor='rgba(255, 255, 255, 0.05)', 
+        showline=True, 
+        linewidth=1, 
+        linecolor='rgba(255, 255, 255, 0.15)', 
+        mirror=True
+    )
+    fig.update_yaxes(
+        showgrid=True, 
+        gridcolor='rgba(255, 255, 255, 0.05)', 
+        showline=True, 
+        linewidth=1, 
+        linecolor='rgba(255, 255, 255, 0.15)', 
+        mirror=True
+    )
+    
     return fig
 
 # Global veriler
