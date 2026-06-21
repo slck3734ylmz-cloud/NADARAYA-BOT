@@ -174,14 +174,59 @@ def calculate_nw_bands(df, std_multiplier, col_suffix):
     df[f"NW_Alt{col_suffix}"] = df["NW_Merkez"] - (std_multiplier * df["Sapma_Std"])
     return df
 
+# ================= EN SON PROBLEM: GÖLGELENDİRMELİ VE MUM GRAFİKLİ PROFESYONEL ÇİZİCİ =================
 def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l_avg=0.0, s_avg=0.0):
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=df_subset[price_col], name="Anlık Fiyat", line=dict(color='royalblue', width=2)))
-    fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=df_subset[ust_band_col], name="Üst Band (Satış)", line=dict(color='crimson', width=1.5, dash='dash')))
-    fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=df_subset[alt_band_col], name="Alt Band (Alış)", line=dict(color='limegreen', width=1.5, dash='dash')))
-    if l_avg > 0: fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=[l_avg]*len(df_subset), name="Long Maliyet Ort.", line=dict(color='green', width=1.5)))
-    if s_avg > 0: fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=[s_avg]*len(df_subset), name="Short Maliyet Ort.", line=dict(color='red', width=1.5)))
-    fig.update_layout(title=title, template="plotly_dark", xaxis_title="Zaman", yaxis_title="Fiyat", margin=dict(l=20, r=20, t=40, b=20), height=400, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    
+    # 1. Alt Zarf Bandı (Alış Sınırı)
+    fig.add_trace(go.Scatter(
+        x=df_subset["Zaman"], 
+        y=df_subset[alt_band_col], 
+        name="Alt Band (Alış)", 
+        line=dict(color='rgba(50, 205, 50, 0.45)', width=1.5, dash='dash'),
+        showlegend=True
+    ))
+    
+    # 2. Üst Zarf Bandı (Satış Sınırı) + Kanal Alanı Gölgeleme (fill='tonexty')
+    fig.add_trace(go.Scatter(
+        x=df_subset["Zaman"], 
+        y=df_subset[ust_band_col], 
+        name="Üst Band (Satış)", 
+        line=dict(color='rgba(220, 20, 60, 0.45)', width=1.5, dash='dash'),
+        fill='tonexty',
+        fillcolor='rgba(255, 255, 255, 0.03)', # Çok hafif ve asil yarı şeffaf kanal dolgusu
+        showlegend=True
+    ))
+
+    # 3. Profesyonel Mum Grafikleri (Candlesticks)
+    fig.add_trace(go.Candlestick(
+        x=df_subset["Zaman"],
+        open=df_subset["Acilis"],
+        high=df_subset["Yuksek"],
+        low=df_subset["Dusuk"],
+        close=df_subset[price_col],
+        name="Fiyat (OHLC)",
+        increasing_line_color='rgba(50, 205, 50, 0.95)', 
+        decreasing_line_color='rgba(220, 20, 60, 0.95)'
+    ))
+    
+    # Ortalama Maliyet Çizgileri
+    if l_avg > 0: 
+        fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=[l_avg]*len(df_subset), name="Long Maliyet Ort.", line=dict(color='green', width=1.5)))
+    if s_avg > 0: 
+        fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=[s_avg]*len(df_subset), name="Short Maliyet Ort.", line=dict(color='red', width=1.5)))
+        
+    fig.update_layout(
+        title=title, 
+        template="plotly_dark", 
+        xaxis_title="Zaman", 
+        yaxis_title="Fiyat", 
+        margin=dict(l=20, r=20, t=40, b=20), 
+        height=400, 
+        xaxis_rangeslider_visible=False, # Alttaki gereksiz barı gizleyerek sıkışmayı önler
+        hovermode="x unified", # Fareyle gelindiğinde tüm verileri asil bir bilgi kartında toplar
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
     return fig
 
 # Global veriler
