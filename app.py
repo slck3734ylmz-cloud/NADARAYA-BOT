@@ -189,10 +189,6 @@ extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
 top_50_data = get_top_50_volume_coins()
 
 # ================= YAN PANEL AYARLARI VE NAVİGASYON =================
-st.sidebar.title("🧭 Terminal Navigasyon")
-app_mode = st.sidebar.radio("Mod Seçin:", ["🖥️ Canlı DCA Terminal", "📊 Geriye Dönük Test (Backtest)"], key="global_app_mode_radio")
-
-st.sidebar.markdown("---")
 st.sidebar.title("💳 Cüzdan Durumu")
 st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
 
@@ -218,7 +214,8 @@ else:
 if f"{state_prefix}balance_usd" not in st.session_state:
     loaded_from_db = False
     try:
-        db_query = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).execute()
+        # En yeni güncellenen tek bir kaydı çekmek için id'ye göre azalan sırada çeker.
+        db_query = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).order("id", descending=True).limit(1).execute()
         if db_query.data:
             db_data = db_query.data[0]
             st.session_state[f"{state_prefix}balance_usd"] = db_data.get("balance_usd", 100.0)
@@ -229,6 +226,7 @@ if f"{state_prefix}balance_usd" not in st.session_state:
             st.session_state[f"{state_prefix}s_usd_spent"] = db_data.get("s_usd_spent", 0.0)
             st.session_state[f"{state_prefix}s_avg_price"] = db_data.get("s_avg_price", 0.0)
             st.session_state[f"{state_prefix}log_history"] = db_data.get("log_history") or []
+            
             st.session_state[f"{state_prefix}l_status"] = [
                 db_data.get("l_status_0", False),
                 db_data.get("l_status_1", False),
@@ -239,6 +237,18 @@ if f"{state_prefix}balance_usd" not in st.session_state:
                 db_data.get("s_status_1", False),
                 db_data.get("s_status_2", False)
             ]
+            
+            # Kaydedilmiş kilit fiyatlarını yükler (Esnek kontrolle veritabanında yoksa 0.0 atanır)
+            st.session_state[f"{state_prefix}l_entry_prices"] = [
+                db_data.get("l_entry_0", 0.0) if "l_entry_0" in db_data else 0.0,
+                db_data.get("l_entry_1", 0.0) if "l_entry_1" in db_data else 0.0,
+                db_data.get("l_entry_2", 0.0) if "l_entry_2" in db_data else 0.0
+            ]
+            st.session_state[f"{state_prefix}s_entry_prices"] = [
+                db_data.get("s_entry_0", 0.0) if "s_entry_0" in db_data else 0.0,
+                db_data.get("s_entry_1", 0.0) if "s_entry_1" in db_data else 0.0,
+                db_data.get("s_entry_2", 0.0) if "s_entry_2" in db_data else 0.0
+            ]
             loaded_from_db = True
     except:
         pass
@@ -246,10 +256,12 @@ if f"{state_prefix}balance_usd" not in st.session_state:
     if not loaded_from_db:
         st.session_state[f"{state_prefix}balance_usd"] = 100.0
         st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+        st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+        st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
+        st.session_state[f"{state_prefix}s_entry_prices"] = [0.0, 0.0, 0.0]
         st.session_state[f"{state_prefix}l_crypto"] = 0.0
         st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
         st.session_state[f"{state_prefix}l_avg_price"] = 0.0
-        st.session_state[f"{state_prefix}s_status"] = [False, False, False]
         st.session_state[f"{state_prefix}s_crypto"] = 0.0
         st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
         st.session_state[f"{state_prefix}s_avg_price"] = 0.0
@@ -261,11 +273,26 @@ if f"{state_prefix}locked_prices" not in st.session_state:
 def save_state_to_db():
     try:
         data = {
-            "coin_symbol": selected_symbol, "balance_usd": st.session_state[f"{state_prefix}balance_usd"],
-            "l_status_0": st.session_state[f"{state_prefix}l_status"][0], "l_status_1": st.session_state[f"{state_prefix}l_status"][1], "l_status_2": st.session_state[f"{state_prefix}l_status"][2],
-            "l_crypto": st.session_state[f"{state_prefix}l_crypto"], "l_usd_spent": st.session_state[f"{state_prefix}l_usd_spent"], "l_avg_price": st.session_state[f"{state_prefix}l_avg_price"],
-            "s_status_0": st.session_state[f"{state_prefix}s_status"][0], "s_status_1": st.session_state[f"{state_prefix}s_status"][1], "s_status_2": st.session_state[f"{state_prefix}s_status"][2],
-            "s_crypto": st.session_state[f"{state_prefix}s_crypto"], "s_usd_spent": st.session_state[f"{state_prefix}s_usd_spent"], "s_avg_price": st.session_state[f"{state_prefix}s_avg_price"],
+            "coin_symbol": selected_symbol, 
+            "balance_usd": st.session_state[f"{state_prefix}balance_usd"],
+            "l_status_0": st.session_state[f"{state_prefix}l_status"][0], 
+            "l_status_1": st.session_state[f"{state_prefix}l_status"][1], 
+            "l_status_2": st.session_state[f"{state_prefix}l_status"][2],
+            "s_status_0": st.session_state[f"{state_prefix}s_status"][0], 
+            "s_status_1": st.session_state[f"{state_prefix}s_status"][1], 
+            "s_status_2": st.session_state[f"{state_prefix}s_status"][2],
+            "l_entry_0": st.session_state[f"{state_prefix}l_entry_prices"][0],
+            "l_entry_1": st.session_state[f"{state_prefix}l_entry_prices"][1],
+            "l_entry_2": st.session_state[f"{state_prefix}l_entry_prices"][2],
+            "s_entry_0": st.session_state[f"{state_prefix}s_entry_prices"][0],
+            "s_entry_1": st.session_state[f"{state_prefix}s_entry_prices"][1],
+            "s_entry_2": st.session_state[f"{state_prefix}s_entry_prices"][2],
+            "l_crypto": st.session_state[f"{state_prefix}l_crypto"], 
+            "l_usd_spent": st.session_state[f"{state_prefix}l_usd_spent"], 
+            "l_avg_price": st.session_state[f"{state_prefix}l_avg_price"],
+            "s_crypto": st.session_state[f"{state_prefix}s_crypto"], 
+            "s_usd_spent": st.session_state[f"{state_prefix}s_usd_spent"], 
+            "s_avg_price": st.session_state[f"{state_prefix}s_avg_price"],
             "log_history": st.session_state[f"{state_prefix}log_history"]
         }
         supabase.table("bot_state").upsert(data).execute()
@@ -286,219 +313,157 @@ def send_telegram_msg(message):
     try: requests.post(url, json=payload)
     except: pass
 
-# ================= MOD 1: GERİYE DÖNÜK TEST (BACKTEST) MODU =================
-if app_mode == "📊 Geriye Dönük Test (Backtest)":
-    st.title("📊 Geriye Dönük Test (Backtest) Masası")
-    st.write("Bu modül, seçtiğiniz borsa çifti için geçmiş fiyat mumlarını çekerek 3 kademeli DCA nedensel (non-repainting) zarf stratejisini simüle eder.")
-    
-    col_bt1, col_bt2, col_bt3 = st.columns(3)
-    bt_tf = col_bt1.selectbox("Test Zaman Dilimi", ["5m", "15m", "1h", "4h"], index=2, key="backtest_tf_selector_unique")
-    bt_limit = col_bt2.number_input("Test Edilecek Mum Sayısı", min_value=100, max_value=3000, value=1000, step=100, key="backtest_limit_unique")
-    bt_std = col_bt3.number_input("Nadaraya-Watson Std Sapma (Sapma Seviyesi)", min_value=1.5, max_value=4.0, value=3.0, step=0.1, key="backtest_std_input")
-    
-    col_bt4, col_bt5 = st.columns(2)
-    bt_tp = col_bt4.slider("Hedef Kar-Al Oranı (%)", min_value=0.2, max_value=5.0, value=1.0, step=0.1, key="backtest_tp_slider") / 100.0
-    bt_sl = col_bt5.slider("3. Kademe Stop-Loss Oranı (%)", min_value=0.5, max_value=10.0, value=2.0, step=0.1, key="backtest_sl_slider") / 100.0
-    
-    if st.button("▶️ Geriye Dönük Testi Çalıştır", key="backtest_run_button"):
-        with st.spinner("Geçmiş veriler çekiliyor ve analiz ediliyor..."):
-            try:
-                bt_raw = exchange.fetch_ohlcv(selected_symbol, bt_tf, limit=int(bt_limit))
-                df_bt = pd.DataFrame(bt_raw, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-                df_bt["Zaman"] = pd.to_datetime(df_bt["Zaman"], unit="ms")
-                
-                df_bt = calculate_nw_bands(df_bt, bt_std * 0.7, "_K1")
-                df_bt = calculate_nw_bands(df_bt, bt_std * 0.85, "_K2")
-                df_bt = calculate_nw_bands(df_bt, bt_std, "_K3")
-                
-                initial_balance, balance = 1000.0, 1000.0
-                l_status, l_crypto, l_usd_spent, l_avg_price = [False, False, False], 0.0, 0.0, 0.0
-                equity_curve, trade_logs = [], []
-                
-                for i, row in df_bt.iterrows():
-                    close, t_time = row["Kapanis"], row["Zaman"]
-                    
-                    if sum(l_status) > 0:
-                        l_tp_target = l_avg_price * (1 + bt_tp)
-                        if l_status[2] and close <= (df_bt.at[i, "NW_Alt_K3"] * (1 - bt_sl)):
-                            pnl_usd = (l_crypto * close) - l_usd_spent
-                            balance += l_crypto * close
-                            trade_logs.append({"Tür": "LONG STOP-LOSS", "Kapanış Zamanı": t_time, "Giriş Fiyatı": l_avg_price, "Kapanış Fiyatı": close, "Kar/Zarar ($)": pnl_usd, "Kalan Bakiye": balance})
-                            l_crypto, l_usd_spent, l_avg_price, l_status = 0.0, 0.0, 0.0, [False, False, False]
-                        elif close >= l_tp_target:
-                            pnl_usd = (l_crypto * close) - l_usd_spent
-                            balance += l_crypto * close
-                            trade_logs.append({"Tür": "LONG KAR-AL", "Kapanış Zamanı": t_time, "Giriş Fiyatı": l_avg_price, "Kapanış Fiyatı": close, "Kar/Zarar ($)": pnl_usd, "Kalan Bakiye": balance})
-                            l_crypto, l_usd_spent, l_avg_price, l_status = 0.0, 0.0, 0.0, [False, False, False]
-                            
-                    for idx, th, val in zip([0, 1, 2], ["_K1", "_K2", "_K3"], [0.05, 0.10, 0.25]):
-                        if close <= row[f"NW_Alt{th}"] and (idx == 0 or l_status[idx-1]) and not l_status[idx]:
-                            buy_usd = initial_balance * val
-                            if balance >= buy_usd:
-                                balance -= buy_usd
-                                l_crypto += buy_usd / close
-                                l_usd_spent += buy_usd
-                                l_status[idx] = True
-                                l_avg_price = l_usd_spent / l_crypto
-                    equity_curve.append(balance + (l_crypto * close))
-                    
-                df_equity = pd.DataFrame({"Zaman": df_bt["Zaman"], "Bakiye": equity_curve})
-                df_trades = pd.DataFrame(trade_logs)
-                if not df_trades.empty:
-                    win_rate = (len(df_trades[df_trades["Kar/Zarar ($)"] > 0]) / len(df_trades)) * 100.0
-                    col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-                    col_r1.metric("Başlangıç Bakiyesi", f"${initial_balance:,.2f}")
-                    col_r2.metric("Son Bakiye", f"${balance + (l_crypto * close):,.2f}")
-                    col_r3.metric("Win Rate", f"%{win_rate:.1f}")
-                    col_r4.metric("Toplam İşlem", f"{len(df_trades)}")
-                    
-                    fig_bt = go.Figure()
-                    fig_bt.add_trace(go.Scatter(x=df_equity["Zaman"], y=df_equity["Bakiye"], name="Bakiye", line=dict(color="gold", width=2.5)))
-                    fig_bt.update_layout(title="Bakiye Gelişim Grafiği (Equity Curve)", template="plotly_dark", xaxis_title="Zaman", yaxis_title="Bakiye (USD)", margin=dict(l=20, r=20, t=40, b=20), height=400, hovermode="x unified")
-                    st.plotly_chart(fig_bt, use_container_width=True, key="backtest_plotly_equity_chart_unique")
-                    st.dataframe(df_trades)
-                else: st.warning("Test kriterlerine uygun işlem gerçekleşmedi.")
-            except Exception as e: st.error(f"Hata: {e}")
+# ================= MASAÜSTÜ CANLI DCA TERMINALİ =================
+manual_lock = st.sidebar.toggle("🔒 Bekleyen Seviyeleri Dondur (El İle)", value=False, key="live_manual_lock_toggle")
 
-# ================= MOD 2: CANLI DCA TERMINAL MODU =================
-elif app_mode == "🖥️ Canlı DCA Terminal":
-    manual_lock = st.sidebar.toggle("🔒 Bekleyen Seviyeleri Dondur (El İle)", value=False, key="live_manual_lock_toggle")
-    
-    if st.sidebar.button("🔔 Telegram Bağlantısını Test Et", key="live_telegram_test_button_unique"):
-        send_telegram_msg(f"👋 *Bağlantı Testi:* Web siteniz üzerinden gönderilen test mesajı başarılı!")
-        st.sidebar.success("Test mesajı gönderildi!")
+if st.sidebar.button("🔔 Telegram Bağlantısını Test Et", key="live_telegram_test_button_unique"):
+    send_telegram_msg(f"👋 *Bağlantı Testi:* Web siteniz üzerinden gönderilen test mesajı başarılı!")
+    st.sidebar.success("Test mesajı gönderildi!")
 
-    if st.sidebar.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="live_reset_all_positions_button"):
-        st.session_state[f"{state_prefix}l_status"] = [False, False, False]
-        st.session_state[f"{state_prefix}s_status"] = [False, False, False]
-        st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
-        st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
-        st.session_state[f"{state_prefix}balance_usd"] = 100.0
-        st.session_state[f"{state_prefix}locked_prices"] = None
-        save_state_to_db()
-        st.rerun()
+if st.sidebar.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="live_reset_all_positions_button"):
+    st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+    st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+    st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
+    st.session_state[f"{state_prefix}s_entry_prices"] = [0.0, 0.0, 0.0]
+    st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
+    st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
+    st.session_state[f"{state_prefix}balance_usd"] = 100.0
+    st.session_state[f"{state_prefix}locked_prices"] = None
+    save_state_to_db()
+    st.rerun()
 
-    st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
-    countdown_placeholder = st.sidebar.empty()
-    main_container = st.empty()
+st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
+countdown_placeholder = st.sidebar.empty()
+main_container = st.empty()
 
-    @st.fragment(run_every="10s")
-    def live_dca_fragment():
-        try:
-            # 1. ANLIK BORSA TICKER VERİSİ SORGULAMA
-            live_ticker = exchange.fetch_ticker(selected_symbol)
-            current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
-            price_change_24h = live_ticker.get('percentage') or 0.0
+@st.fragment(run_every="10s")
+def live_dca_fragment():
+    try:
+        # 1. ANLIK BORSA TICKER VERİSİ SORGULAMA
+        live_ticker = exchange.fetch_ticker(selected_symbol)
+        current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
+        price_change_24h = live_ticker.get('percentage') or 0.0
 
-            # 2. KÜRESEL 4H TREND HESAPLAMASI
-            raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=120)
-            df_4h_trend = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-            df_4h_trend["EMA_200"] = df_4h_trend["Kapanis"].ewm(span=200, adjust=False).mean()
-            trend_4h = "YUKARI (BOĞA)" if df_4h_trend.iloc[-1]["Kapanis"] > df_4h_trend.iloc[-1]["EMA_200"] else "AŞAĞI (AYI)"
-            warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
+        # 2. KÜRESEL 4H TREND HESAPLAMASI
+        raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=120)
+        df_4h_trend = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_4h_trend["EMA_200"] = df_4h_trend["Kapanis"].ewm(span=200, adjust=False).mean()
+        trend_4h = "YUKARI (BOĞA)" if df_4h_trend.iloc[-1]["Kapanis"] > df_4h_trend.iloc[-1]["EMA_200"] else "AŞAĞI (AYI)"
+        warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
 
-            # 3. ANLIK VOLATİLİTE ÖLÇÜMÜ (Tansiyon Algoritması)
-            raw_vol = exchange.fetch_ohlcv(selected_symbol, "15m", limit=120)
-            df_vol = pd.DataFrame(raw_vol, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-            is_volatile = df_vol["Kapanis"].rolling(20).std().iloc[-1] > df_vol["Kapanis"].rolling(20).std().median()
-            market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
+        # 3. ANLIK VOLATİLİTE ÖLÇÜMÜ (Tansiyon Algoritması)
+        raw_vol = exchange.fetch_ohlcv(selected_symbol, "15m", limit=120)
+        df_vol = pd.DataFrame(raw_vol, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        is_volatile = df_vol["Kapanis"].rolling(20).std().iloc[-1] > df_vol["Kapanis"].rolling(20).std().median()
+        market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
-            # =================== 4. NATIVE VERİ SORGULAMALARI (120 MUM TAMPONLU) ===================
-            raw_1m = exchange.fetch_ohlcv(selected_symbol, "1m", limit=120)
-            df_1m = pd.DataFrame(raw_1m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-            df_1m["Zaman"] = pd.to_datetime(df_1m["Zaman"], unit="ms")
-            df_1m = calculate_nw_bands(df_1m, 3.0, "_1m")
-            df_1m["RSI"] = calculate_rsi(df_1m["Kapanis"])
+        # =================== 4. NATIVE VERİ SORGULAMALARI (120 MUM TAMPONLU) ===================
+        raw_1m = exchange.fetch_ohlcv(selected_symbol, "1m", limit=120)
+        df_1m = pd.DataFrame(raw_1m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_1m["Zaman"] = pd.to_datetime(df_1m["Zaman"], unit="ms")
+        df_1m = calculate_nw_bands(df_1m, 3.0, "_1m")
+        df_1m["RSI"] = calculate_rsi(df_1m["Kapanis"])
 
-            raw_5m = exchange.fetch_ohlcv(selected_symbol, "5m", limit=120)
-            df_5m = pd.DataFrame(raw_5m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-            df_5m["Zaman"] = pd.to_datetime(df_5m["Zaman"], unit="ms")
-            df_5m = calculate_nw_bands(df_5m, 3.0, "_5m")
-            df_5m["RSI"] = calculate_rsi(df_5m["Kapanis"])
+        raw_5m = exchange.fetch_ohlcv(selected_symbol, "5m", limit=120)
+        df_5m = pd.DataFrame(raw_5m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_5m["Zaman"] = pd.to_datetime(df_5m["Zaman"], unit="ms")
+        df_5m = calculate_nw_bands(df_5m, 3.0, "_5m")
+        df_5m["RSI"] = calculate_rsi(df_5m["Kapanis"])
 
-            raw_15m = exchange.fetch_ohlcv(selected_symbol, "15m", limit=120)
-            df_15m = pd.DataFrame(raw_15m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-            df_15m["Zaman"] = pd.to_datetime(df_15m["Zaman"], unit="ms")
-            df_15m = calculate_nw_bands(df_15m, 3.0, "_15m")
-            df_15m["RSI"] = calculate_rsi(df_15m["Kapanis"])
+        raw_15m = exchange.fetch_ohlcv(selected_symbol, "15m", limit=120)
+        df_15m = pd.DataFrame(raw_15m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_15m["Zaman"] = pd.to_datetime(df_15m["Zaman"], unit="ms")
+        df_15m = calculate_nw_bands(df_15m, 3.0, "_15m")
+        df_15m["RSI"] = calculate_rsi(df_15m["Kapanis"])
 
-            raw_1h = exchange.fetch_ohlcv(selected_symbol, "1h", limit=120)
-            df_1h = pd.DataFrame(raw_1h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-            df_1h["Zaman"] = pd.to_datetime(df_1h["Zaman"], unit="ms")
-            df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
-            df_1h["RSI"] = calculate_rsi(df_1h["Kapanis"])
+        raw_1h = exchange.fetch_ohlcv(selected_symbol, "1h", limit=120)
+        df_1h = pd.DataFrame(raw_1h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_1h["Zaman"] = pd.to_datetime(df_1h["Zaman"], unit="ms")
+        df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
+        df_1h["RSI"] = calculate_rsi(df_1h["Kapanis"])
 
-            raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=120)
-            df_4h = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-            df_4h["Zaman"] = pd.to_datetime(df_4h["Zaman"], unit="ms")
-            df_4h = calculate_nw_bands(df_4h, 3.0, "_4h")
-            df_4h["RSI"] = calculate_rsi(df_4h["Kapanis"])
+        raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=120)
+        df_4h = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_4h["Zaman"] = pd.to_datetime(df_4h["Zaman"], unit="ms")
+        df_4h = calculate_nw_bands(df_4h, 3.0, "_4h")
+        df_4h["RSI"] = calculate_rsi(df_4h["Kapanis"])
 
-            raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=120)
-            df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-            df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
-            df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
-            df_1d["RSI"] = calculate_rsi(df_1d["Kapanis"])
+        raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=120)
+        df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
+        df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
+        df_1d["RSI"] = calculate_rsi(df_1d["Kapanis"])
 
-            df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
-            extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
+        df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
+        extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
 
-            # =================== 5. SABİT HİYERARŞİ HESAPLAMASI (5m / 1h / 4h) ===================
-            # Kademeleriniz tamamen istekleriniz doğrultusunda 5m, 1h ve 4h olarak hesaplanır.
-            raw_k1_alt = df_5m.iloc[-2]["NW_Alt_5m"]
-            raw_k2_alt = df_1h.iloc[-2]["NW_Alt_1h"]
-            raw_k3_alt = df_4h.iloc[-2]["NW_Alt_4h"]
+        # =================== 5. SABİT HİYERARŞİ HESAPLAMASI (5m / 1h / 4h) ===================
+        # Kademeler 5m, 1h ve 4h olarak hesaplanır.
+        raw_k1_alt = df_5m.iloc[-2]["NW_Alt_5m"]
+        raw_k2_alt = df_1h.iloc[-2]["NW_Alt_1h"]
+        raw_k3_alt = df_4h.iloc[-2]["NW_Alt_4h"]
 
-            raw_k1_ust = df_5m.iloc[-2]["NW_Ust_5m"]
-            raw_k2_ust = df_1h.iloc[-2]["NW_Ust_1h"]
-            raw_k3_ust = df_4h.iloc[-2]["NW_Ust_4h"]
+        raw_k1_ust = df_5m.iloc[-2]["NW_Ust_5m"]
+        raw_k2_ust = df_1h.iloc[-2]["NW_Ust_1h"]
+        raw_k3_ust = df_4h.iloc[-2]["NW_Ust_4h"]
 
-            # --- Matematiksel Sıralama Koruması (Sorting Guard) ---
-            # LONG Seviyeleri (Her zaman K1 > K2 > K3 olmalıdır)
-            dyn_alt_5m = raw_k1_alt
-            dyn_alt_1h = min(raw_k2_alt, dyn_alt_5m * 0.997)  # K2, K1'den en az %0.3 daha ucuz olmaya zorlanır.
-            dyn_alt_4h = min(raw_k3_alt, dyn_alt_1h * 0.997)  # K3, K2'den en az %0.3 daha ucuz olmaya zorlanır.
+        # --- Matematiksel Sıralama Koruması (Sorting Guard) ---
+        # LONG Seviyeleri (Her zaman K1 > K2 > K3 olmalıdır)
+        k1_alt_base = raw_k1_alt
+        k2_alt_base = min(raw_k2_alt, k1_alt_base * 0.997)
+        k3_alt_base = min(raw_k3_alt, k2_alt_base * 0.997)
 
-            # SHORT Seviyeleri (Her zaman K1 < K2 < K3 olmalıdır)
-            dyn_ust_5m = raw_k1_ust
-            dyn_ust_1h = max(raw_k2_ust, dyn_ust_5m * 1.003)  # K2, K1'den en az %0.3 daha pahalı olmaya zorlanır.
-            dyn_ust_4h = max(raw_k3_ust, dyn_ust_1h * 1.003)  # K3, K2'den en az %0.3 daha pahalı olmaya zorlanır.
+        # SHORT Seviyeleri (Her zaman K1 < K2 < K3 olmalıdır)
+        k1_ust_base = raw_k1_ust
+        k2_ust_base = max(raw_k2_ust, k1_ust_base * 1.003)
+        k3_ust_base = max(raw_k3_ust, k2_ust_base * 1.003)
 
-            l1_lbl, l2_lbl, l3_lbl = "Kademe 1 (5m)", "Kademe 2 (1h)", "Kademe 3 (4h)"
-            s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (5m)", "Kademe 2 (1h)", "Kademe 3 (4h)"
-            active_engine_name = "⏱️ SABİT MOTOR (5m / 1h / 4h Hiyerarşisi)"
+        # --- Dinamik Sabitleme (Level Locking) Mantığı ---
+        # Alım yapılan seviyelerin fiyatları sabitlenir, alınmayanlar hareketli olarak yenilenmeye devam eder.
+        nw_alt_5m = st.session_state[f"{state_prefix}l_entry_prices"][0] if st.session_state[f"{state_prefix}l_status"][0] else k1_alt_base
+        nw_alt_1h = st.session_state[f"{state_prefix}l_entry_prices"][1] if st.session_state[f"{state_prefix}l_status"][1] else k2_alt_base
+        nw_alt_4h = st.session_state[f"{state_prefix}l_entry_prices"][2] if st.session_state[f"{state_prefix}l_status"][2] else k3_alt_base
 
-            if manual_lock:
-                if st.session_state[f"{state_prefix}locked_prices"] is None:
-                    st.session_state[f"{state_prefix}locked_prices"] = {"nw_alt_5m": dyn_alt_5m, "nw_alt_1h": dyn_alt_1h, "nw_alt_4h": dyn_alt_4h, "nw_ust_5m": dyn_ust_5m, "nw_ust_1h": dyn_ust_1h, "nw_ust_4h": dyn_ust_4h}
-                nw_alt_5m, nw_alt_1h, nw_alt_4h = st.session_state[f"{state_prefix}locked_prices"]["nw_alt_5m"], st.session_state[f"{state_prefix}locked_prices"]["nw_alt_1h"], st.session_state[f"{state_prefix}locked_prices"]["nw_alt_4h"]
-                nw_ust_5m, nw_ust_1h, nw_ust_4h = st.session_state[f"{state_prefix}locked_prices"]["nw_ust_5m"], st.session_state[f"{state_prefix}locked_prices"]["nw_ust_1h"], st.session_state[f"{state_prefix}locked_prices"]["nw_ust_4h"]
-            else:
-                st.session_state[f"{state_prefix}locked_prices"] = None
-                nw_alt_5m, nw_alt_1h, nw_alt_4h = dyn_alt_5m, dyn_alt_1h, dyn_alt_4h
-                nw_ust_5m, nw_ust_1h, nw_ust_4h = dyn_ust_5m, dyn_ust_1h, dyn_ust_4h
+        nw_ust_5m = st.session_state[f"{state_prefix}s_entry_prices"][0] if st.session_state[f"{state_prefix}s_status"][0] else k1_ust_base
+        nw_ust_1h = st.session_state[f"{state_prefix}s_entry_prices"][1] if st.session_state[f"{state_prefix}s_status"][1] else k2_ust_base
+        nw_ust_4h = st.session_state[f"{state_prefix}s_entry_prices"][2] if st.session_state[f"{state_prefix}s_status"][2] else k3_ust_base
 
-            rsi_1m_val, rsi_5m_val, rsi_15m_val, rsi_1h_val, rsi_4h_val, rsi_1d_val = df_1m.iloc[-1]["RSI"], df_5m.iloc[-1]["RSI"], df_15m.iloc[-1]["RSI"], df_1h.iloc[-1]["RSI"], df_4h.iloc[-1]["RSI"], df_1d.iloc[-1]["RSI"]
+        l1_lbl, l2_lbl, l3_lbl = "Kademe 1 (5m)", "Kademe 2 (1h)", "Kademe 3 (4h)"
+        s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (5m)", "Kademe 2 (1h)", "Kademe 3 (4h)"
+        active_engine_name = "⏱️ SABİT MOTOR (5m / 1h / 4h Hiyerarşisi)"
 
-            # LONG ÇIKIŞLARI
-            if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-                l_tp = st.session_state[f"{state_prefix}l_avg_price"] * (1 + target_profit_ratio)
-                if st.session_state[f"{state_prefix}l_status"][2] and current_price <= (nw_alt_4h * (1 - stop_loss_ratio)):
-                    st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                    msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
-                    send_telegram_msg(msg)
-                    st.session_state[f"{state_prefix}log_history"].append(msg)
-                    st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
-                    st.session_state[f"{state_prefix}l_status"] = [False, False, False]
-                    save_state_to_db()
-                elif current_price >= l_tp:
-                    st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                    msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
-                    send_telegram_msg(msg)
-                    st.session_state[f"{state_prefix}log_history"].append(msg)
-                    st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
-                    st.session_state[f"{state_prefix}l_status"] = [False, False, False]
-                    save_state_to_db()
+        if manual_lock:
+            if st.session_state[f"{state_prefix}locked_prices"] is None:
+                # manual_lock için kilitli fiyatlar tanımlı olan nw_alt değişkenleri üzerinden güvenli hale getirildi.
+                st.session_state[f"{state_prefix}locked_prices"] = {"nw_alt_5m": nw_alt_5m, "nw_alt_1h": nw_alt_1h, "nw_alt_4h": nw_alt_4h, "nw_ust_5m": nw_ust_5m, "nw_ust_1h": nw_ust_1h, "nw_ust_4h": nw_ust_4h}
+            nw_alt_5m, nw_alt_1h, nw_alt_4h = st.session_state[f"{state_prefix}locked_prices"]["nw_alt_5m"], st.session_state[f"{state_prefix}locked_prices"]["nw_alt_1h"], st.session_state[f"{state_prefix}locked_prices"]["nw_alt_4h"]
+            nw_ust_5m, nw_ust_1h, nw_ust_4h = st.session_state[f"{state_prefix}locked_prices"]["nw_ust_5m"], st.session_state[f"{state_prefix}locked_prices"]["nw_ust_1h"], st.session_state[f"{state_prefix}locked_prices"]["nw_ust_4h"]
+        else:
+            st.session_state[f"{state_prefix}locked_prices"] = None
+
+        rsi_1m_val, rsi_5m_val, rsi_15m_val, rsi_1h_val, rsi_4h_val, rsi_1d_val = df_1m.iloc[-1]["RSI"], df_5m.iloc[-1]["RSI"], df_15m.iloc[-1]["RSI"], df_1h.iloc[-1]["RSI"], df_4h.iloc[-1]["RSI"], df_1d.iloc[-1]["RSI"]
+
+        # LONG ÇIKIŞLARI
+        if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
+            l_tp = st.session_state[f"{state_prefix}l_avg_price"] * (1 + target_profit_ratio)
+            if st.session_state[f"{state_prefix}l_status"][2] and current_price <= (nw_alt_4h * (1 - stop_loss_ratio)):
+                st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
+                msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
+                send_telegram_msg(msg)
+                st.session_state[f"{state_prefix}log_history"].append(msg)
+                st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
+                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
+                save_state_to_db()
+            elif current_price >= l_tp:
+                st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
+                msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
+                send_telegram_msg(msg)
+                st.session_state[f"{state_prefix}log_history"].append(msg)
+                st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
+                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
+                save_state_to_db()
 
             # SHORT POZİSYON ÇIKIŞLARI
             if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
@@ -512,6 +477,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.session_state[f"{state_prefix}log_history"].append(msg)
                     st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
                     st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                    st.session_state[f"{state_prefix}s_entry_prices"] = [0.0, 0.0, 0.0]
                     save_state_to_db()
                 elif current_price <= s_tp:
                     pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
@@ -521,6 +487,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.session_state[f"{state_prefix}log_history"].append(msg)
                     st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
                     st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                    st.session_state[f"{state_prefix}s_entry_prices"] = [0.0, 0.0, 0.0]
                     save_state_to_db()
 
             # LONG GİRİŞLERİ
@@ -530,6 +497,8 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.session_state[f"{state_prefix}l_crypto"] += val
                     st.session_state[f"{state_prefix}l_usd_spent"] += val * current_price
                     st.session_state[f"{state_prefix}l_status"][idx] = True
+                    # Alım yapılan seviyenin fiyatı tam o andaki değere sabitlenir
+                    st.session_state[f"{state_prefix}l_entry_prices"][idx] = current_price
                     st.session_state[f"{state_prefix}l_avg_price"] = st.session_state[f"{state_prefix}l_usd_spent"] / st.session_state[f"{state_prefix}l_crypto"]
                     msg = f"📈 *LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
                     send_telegram_msg(msg)
@@ -544,6 +513,8 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.session_state[f"{state_prefix}s_crypto"] += val
                     st.session_state[f"{state_prefix}s_usd_spent"] += val * current_price
                     st.session_state[f"{state_prefix}s_status"][idx] = True
+                    # Açılış yapılan seviyenin fiyatı tam o andaki değere sabitlenir
+                    st.session_state[f"{state_prefix}s_entry_prices"][idx] = current_price
                     st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
                     msg = f"📈 *SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
                     send_telegram_msg(msg)
