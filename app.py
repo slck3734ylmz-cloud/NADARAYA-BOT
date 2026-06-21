@@ -11,9 +11,13 @@ from supabase import create_client, Client
 
 # ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
 def check_password():
+    """Doğru şifre girilmeden hiçbir veritabanı veya borsa verisi yüklenmez."""
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
-    if st.session_state.password_correct: return True
+    
+    if st.session_state.password_correct:
+        return True
+        
     st.markdown("<h2 style='text-align: center; color: white; margin-top: 50px;'>🔒 DCA Terminal Güvenlik Girişi</h2>", unsafe_allow_html=True)
     col_login, _ = st.columns([1, 1.5])
     with col_login:
@@ -22,135 +26,262 @@ def check_password():
             if user_password == "dca2026": 
                 st.session_state.password_correct = True
                 st.rerun()
-            else: st.error("❌ Hatalı Şifre! Erişim reddedildi.")
+            else:
+                st.error("❌ Hatalı Şifre! Erişim reddedildi.")
     return False
 
-if not check_password(): st.stop()
+if not check_password():
+    st.stop()  # Şifre yanlışsa kodun geri kalanının çalışmasını durdurur
+# =========================================================================
 
+# Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
-# Flicker-Free CSS
-st.markdown("<style>div[data-testid='stAppViewBlockContainer']{opacity:1.0!important;transition:none!important;}div[data-testid='stStatusWidget']{display:none!important;visibility:hidden!important;}</style>", unsafe_allow_html=True)
+# ================= FLICKER-FREE (KIPIRDAMASIZ) CSS ENJEKSİYONU =================
+st.markdown(
+    """
+    <style>
+    div[data-testid="stAppViewBlockContainer"] {
+        opacity: 1.0 !important;
+        transition: none !important;
+    }
+    div[data-testid="stStatusWidget"] {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-# API ve Database Bağlantıları
+# Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz (Backtest sayfanız için gerekli)
+plt.style.use('dark_background')
+
+# Telegram ve Supabase Ayarları
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
+
 supabase_url = "https://ahnwbxfghccotwnlhzgl.supabase.co"
 supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFobndieGZnaGNjb3R3bmxoemdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwMTI3NzcsImV4cCI6MjA5NzU4ODc3N30.9cR5NBti19ddH7UivdcikYFoCRwk42mIkOkElYqT2Oc"
-supabase: Client = create_client(supabase_url, supabase_key)
-exchange = ccxt.gate({'options': {'defaultType': 'swap'}})
 
-# ================= MATEMATİKSEL METRİKLER =================
+# Bulut veritabanı istemcisini başlatıyoruz
+supabase: Client = create_client(supabase_url, supabase_key)
+# ======================================================================================
+
+# GATE.IO FUTURES BAĞLANTISI (Vadeli Modu Aktif)
+exchange = ccxt.gate({
+    'options': {
+        'defaultType': 'swap',
+    }
+})
+
+# ================= MATEMATİKSEL RSI HESAPLAMA ALGORİTMASI =================
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
-    return 100 - (100 / (1 + (gain / (loss + 1e-9))))
+    rs = gain / (loss + 1e-9)
+    return 100 - (100 / (1 + rs))
 
+# ================= MATEMATİKSEL RSI IRAKSAMA TESPİT ALGORİTMASI =================
 def detect_rsi_divergence(closes, rsis):
-    if len(closes) < 15 or len(rsis) < 15: return False, False
-    c, r = closes[-15:], rsis[-15:]
-    lows = [i for i in range(1, len(c)-1) if c[i] < c[i-1] and c[i] < c[i+1]]
-    bull = len(lows) >= 2 and c[lows[-1]] < c[lows[-2]] and r[lows[-1]] > r[lows[-2]] and r[lows[-1]] < 45
-    highs = [i for i in range(1, len(c)-1) if c[i] > c[i-1] and c[i] > c[i+1]]
-    bear = len(highs) >= 2 and c[highs[-1]] > c[highs[-2]] and r[highs[-1]] < r[highs[-2]] and r[highs[-1]] > 55
-    return bull, bear
+    if len(closes) < 15 or len(rsis) < 15:
+        return False, False
+        
+    c_sub = closes[-15:]
+    r_sub = rsis[-15:]
+    
+    # Yerel dipleri bul (Boğa Iraksaması)
+    lows_idx = []
+    for i in range(1, len(c_sub)-1):
+        if c_sub[i] < c_sub[i-1] and c_sub[i] < c_sub[i+1]:
+            lows_idx.append(i)
+            
+    bull_div = False
+    if len(lows_idx) >= 2:
+        i1, i2 = lows_idx[-2], lows_idx[-1]
+        if c_sub[i2] < c_sub[i1] and r_sub[i2] > r_sub[i1]:
+            if r_sub[i2] < 45:
+                bull_div = True
+                
+    # Yerel tepeleri bul (Ayı Iraksaması)
+    highs_idx = []
+    for i in range(1, len(c_sub)-1):
+        if c_sub[i] > c_sub[i-1] and c_sub[i] > c_sub[i+1]:
+            highs_idx.append(i)
+            
+    bear_div = False
+    if len(highs_idx) >= 2:
+        i1, i2 = highs_idx[-2], highs_idx[-1]
+        if c_sub[i2] > c_sub[i1] and r_sub[i2] < r_sub[i1]:
+            if r_sub[i2] > 55:
+                bear_div = True
+                
+    return bull_div, bear_div
 
+# ================= GÖMÜLÜ CANLI FİYAT VE YÜZDELİKLİ TARAYICI =================
 @st.cache_data(ttl=300)
 def get_top_50_volume_coins():
     try:
         tickers = exchange.fetch_tickers()
-        usd = []
-        for sym, t in tickers.items():
-            if sym.endswith(':USDT'):
-                v = t.get('quoteVolume') or (t.get('baseVolume', 0.0) * (t.get('last') or t.get('close') or 0.0))
-                if v > 0: usd.append({'symbol': sym, 'volume': quote_vol, 'price': t.get('last') or t.get('close') or 0.0, 'change': t.get('percentage') or 0.0})
-        usd.sort(key=lambda x: x['volume'], reverse=True)
-        return [{'symbol': x['symbol'], 'display': f"{x['symbol'].split(':')[0]} (${x['price']:,.2f} | {x['change']:+.2f}%)"} for x in usd[:50]]
-    except: return [{'symbol': "BTC/USDT:USDT", 'display': "BTC/USDT ($64,222.00 | +0.00%)"}]
+        usd_tickers = []
+        for symbol, ticker in tickers.items():
+            if symbol.endswith(':USDT'):
+                quote_vol = ticker.get('quoteVolume')
+                if quote_vol is None:
+                    base_vol = ticker.get('baseVolume') or 0.0
+                    last_price = ticker.get('last') or ticker.get('close') or 0.0
+                    quote_vol = base_vol * last_price
+                
+                if quote_vol is not None and quote_vol > 0:
+                    usd_tickers.append({
+                        'symbol': symbol, 
+                        'volume': quote_vol, 
+                        'price': ticker.get('last') or ticker.get('close') or 0.0, 
+                        'change': ticker.get('percentage') or 0.0
+                    })
+        
+        if len(usd_tickers) == 0:
+            return [
+                {'symbol': "BTC/USDT:USDT", 'display': "BTC/USDT ($64,222.00 | +0.00%)"},
+                {'symbol': "ETH/USDT:USDT", 'display': "ETH/USDT ($3,500.00 | +0.00%)"}
+            ]
+            
+        usd_tickers.sort(key=lambda x: x['volume'], reverse=True)
+        top_50_data = []
+        for item in usd_tickers[:50]:
+            clean_sym = item['symbol'].split(":")[0]
+            display_name = f"{clean_sym} (${item['price']:,.2f} | {item['change']:+.2f}%)"
+            top_50_data.append({
+                'symbol': item['symbol'],
+                'display': display_name
+            })
+        return top_50_data
+    except Exception as e:
+        return [
+            {'symbol': "BTC/USDT:USDT", 'display': "BTC/USDT ($64,222.00 | +0.00%)"},
+            {'symbol': "ETH/USDT:USDT", 'display': "ETH/USDT ($3,500.00 | +0.00%)"}
+        ]
 
+# ================= EN EKSTREM FONLAMA ORANLARI VE EN ÇOK YÜKSELEN/DÜŞENLER GÜÇLÜ TARAYICI =================
 @st.cache_data(ttl=300)
 def get_market_movers_and_funding():
     try:
         tickers = exchange.fetch_tickers()
-        movers, funding = [], []
-        for sym, t in tickers.items():
-            if sym.endswith(':USDT'):
-                p, c = t.get('last') or t.get('close') or 0.0, t.get('percentage') or 0.0
-                fr = float(t.get('info', {}).get('funding_rate', 0.0)) * 100.0
-                clean = sym.split(":")[0]
-                if p > 0:
-                    movers.append({'Coin': clean, 'Fiyat (USDT)': p, 'Değişim (%)': c, 'Fonlama Oranı': fr})
-                    funding.append({'symbol': clean, 'rate': fr})
-        funding.sort(key=lambda x: abs(x['rate']), reverse=True)
-        df_m = pd.DataFrame(movers)
-        df_g = df_m.sort_values(by='Değişim (%)', ascending=False).head(5).copy()
-        df_l = df_m.sort_values(by='Değişim (%)', ascending=True).head(5).copy()
-        for df in [df_g, df_l]:
-            df['Değişim (%)'] = df['Değişim (%)'].apply(lambda x: f"{x:+.2f}%")
-            df['Fonlama Oranı'] = df['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
-            df['Fiyat (USDT)'] = df['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
-        return funding[:5], df_g, df_l
-    except: return [], pd.DataFrame(), pd.DataFrame()
+        movers = []
+        funding_rates = []
+        
+        for symbol, ticker in tickers.items():
+            if symbol.endswith(':USDT'):
+                volume = ticker.get('quoteVolume')
+                price = ticker.get('last') or ticker.get('close') or 0.0
+                change = ticker.get('percentage') or 0.0
+                
+                if volume is None:
+                    base_vol = ticker.get('baseVolume') or 0.0
+                    volume = base_vol * price
+                
+                raw_info = ticker.get('info', {})
+                funding_val = raw_info.get('funding_rate')
+                fr_val = float(funding_val) * 100.0 if funding_val is not None else 0.0
+                
+                clean_sym = symbol.split(":")[0]
+                
+                if price > 0 and volume > 0:
+                    movers.append({
+                        'Coin': clean_sym,
+                        'Fiyat (USDT)': price,
+                        'Değişim (%)': change,
+                        'Fonlama Oranı': fr_val
+                    })
+                    
+                if funding_val is not None:
+                    funding_rates.append({
+                        'symbol': clean_sym,
+                        'rate': fr_val
+                    })
+        
+        if len(movers) == 0:
+            return [], pd.DataFrame(), pd.DataFrame()
+            
+        funding_rates.sort(key=lambda x: abs(x['rate']), reverse=True)
+        top_5_funding = funding_rates[:5]
+        
+        df_movers = pd.DataFrame(movers)
+        df_gainers = df_movers.sort_values(by='Değişim (%)', ascending=False).head(5).copy()
+        df_gainers['Değişim (%)'] = df_gainers['Değişim (%)'].apply(lambda x: f"+{x:.2f}%")
+        df_gainers['Fonlama Oranı'] = df_gainers['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
+        df_gainers['Fiyat (USDT)'] = df_gainers['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
+        
+        df_losers = df_movers.sort_values(by='Değişim (%)', ascending=True).head(5).copy()
+        df_losers['Değişim (%)'] = df_losers['Değişim (%)'].apply(lambda x: f"{x:.2f}%")
+        df_losers['Fonlama Oranı'] = df_losers['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
+        df_losers['Fiyat (USDT)'] = df_losers['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
+        
+        return top_5_funding, df_gainers[['Coin', 'Fiyat (USDT)', 'Değişim (%)', 'Fonlama Oranı']], df_losers[['Coin', 'Fiyat (USDT)', 'Değişim (%)', 'Fonlama Oranı']]
+    except Exception as e:
+        return [], pd.DataFrame(), pd.DataFrame()
 
+# ================= 3 GÜNLÜK SANAL LİKİDASYON HARİTASI HESAPLAMA =================
 @st.cache_data(ttl=300)
 def estimate_liquidation_pools(symbol):
     try:
-        raw = exchange.fetch_ohlcv(symbol, "1h", limit=72)
-        df = pd.DataFrame(raw, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-        cur = df.iloc[-1]["Kapanis"]
-        step = 50.0 if current_p > 10000 else (1.0 if current_p > 100 else (0.1 if current_p > 1 else 0.01))
-        long_l, short_l = {}, {}
-        for i, row in df.iterrows():
-            for m in [0.99, 0.98, 0.96]:
-                p = round((row["Dusuk"] * m) / round_step) * round_step
-                long_l[p] = long_l.get(p, 0.0) + row["Hacim"]
-            for m in [1.01, 1.02, 1.04]:
-                p = round((row["Yuksek"] * m) / round_step) * round_step
-                short_l[p] = short_l.get(p, 0.0) + row["Hacim"]
-        sl, ss = sorted(long_l.items(), key=lambda x: x[1], reverse=True)[:3], sorted(short_l.items(), key=lambda x: x[1], reverse=True)[:3]
-        sl.sort(key=lambda x: x[0], reverse=True)
-        ss.sort(key=lambda x: x[0], reverse=False)
-        return (
-            pd.DataFrame([{"Likidasyon Fiyatı": f"${p:,.2f}", "Yoğunluk Derecesi": "🔴🔴🔴 YÜKSEK" if v > df["Hacim"].mean()*1.5 else "🔴🔴 ORTA"} for p, v in sl]),
-            pd.DataFrame([{"Likidasyon Fiyatı": f"${p:,.2f}", "Yoğunluk Derecesi": "🟢🟢🟢 YÜKSEK" if v > df["Hacim"].mean()*1.5 else "🟢🟢 ORTA"} for p, v in ss])
-        )
-    except: return pd.DataFrame(), pd.DataFrame()
+        raw_3d = exchange.fetch_ohlcv(symbol, "1h", limit=72)
+        df_3d = pd.DataFrame(raw_3d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        
+        highs = df_3d["Yuksek"].values
+        lows = df_3d["Dusuk"].values
+        volumes = df_3d["Hacim"].values
+        
+        current_p = df_3d.iloc[-1]["Kapanis"]
+        round_step = 50.0 if current_p > 10000 else (1.0 if current_p > 100 else (0.1 if current_p > 1 else 0.01))
+        
+        long_liq_bins = {}
+        short_liq_bins = {}
+        
+        for i in range(len(df_3d)):
+            h = highs[i]
+            l = lows[i]
+            vol = volumes[i]
+            
+            for lev_mult in [0.99, 0.98, 0.96]:
+                liq_p = l * lev_mult
+                bin_p = round(liq_p / round_step) * round_step
+                long_liq_bins[bin_p] = long_liq_bins.get(bin_p, 0.0) + vol
+                
+            for lev_mult in [1.01, 1.02, 1.04]:
+                liq_p = h * lev_mult
+                bin_p = round(liq_p / round_step) * round_step
+                short_liq_bins[bin_p] = short_liq_bins.get(bin_p, 0.0) + vol
+                
+        sorted_long = sorted(long_liq_bins.items(), key=lambda x: x[1], reverse=True)[:3]
+        sorted_short = sorted(short_liq_bins.items(), key=lambda x: x[1], reverse=True)[:3]
+        
+        sorted_long.sort(key=lambda x: x[0], reverse=True)
+        sorted_short.sort(key=lambda x: x[0], reverse=False)
+        
+        long_pools = []
+        for p, v in sorted_long:
+            density = "🔴🔴🔴 YÜKSEK" if v > np.mean(volumes)*1.5 else "🔴🔴 ORTA"
+            long_pools.append({"Likidasyon Fiyatı": f"${p:,.2f}", "Yoğunluk Derecesi": density})
+            
+        short_pools = []
+        for p, v in sorted_short:
+            density = "🟢🟢🟢 YÜKSEK" if v > np.mean(volumes)*1.5 else "🟢🟢 ORTA"
+            short_pools.append({"Likidasyon Fiyatı": f"${p:,.2f}", "Yoğunluk Derecesi": density})
+            
+        return pd.DataFrame(long_pools), pd.DataFrame(short_pools)
+    except:
+        return pd.DataFrame(), pd.DataFrame()
 
-# Non-Repainting NW Filtresi ve Grafik Çizimi
-def nadaraya_watson_estimator(src, h=8):
-    n = len(src)
-    estimates = np.zeros(n)
-    for i in range(n):
-        past_indices = np.arange(i + 1)
-        weights = np.exp(-((past_indices - i) ** 2) / (2 * h ** 2))
-        estimates[i] = np.sum(src[:i+1] * weights) / np.sum(weights)
-    return estimates
-
-def calculate_nw_bands(df, std_multiplier, col_suffix):
-    df["NW_Merkez"] = nadaraya_watson_estimator(df["Kapanis"].values, h=8)
-    df["Fark"] = df["Kapanis"] - df["NW_Merkez"]
-    df["Sapma_Std"] = df["Fark"].rolling(window=20).std()
-    df[f"NW_Ust{col_suffix}"] = df["NW_Merkez"] + (std_multiplier * df["Sapma_Std"])
-    df[f"NW_Alt{col_suffix}"] = df["NW_Merkez"] - (std_multiplier * df["Sapma_Std"])
-    return df
-
-def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l_avg=0.0, s_avg=0.0):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=df_subset[price_col], name="Anlık Fiyat", line=dict(color='royalblue', width=2)))
-    fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=df_subset[ust_band_col], name="Üst Band (Satış)", line=dict(color='crimson', width=1.5, dash='dash')))
-    fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=df_subset[alt_band_col], name="Alt Band (Alış)", line=dict(color='limegreen', width=1.5, dash='dash')))
-    if l_avg > 0: fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=[l_avg]*len(df_subset), name="Long Maliyet Ort.", line=dict(color='green', width=1.5)))
-    if s_avg > 0: fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=[s_avg]*len(df_subset), name="Short Maliyet Ort.", line=dict(color='red', width=1.5)))
-    fig.update_layout(title=title, template="plotly_dark", xaxis_title="Zaman", yaxis_title="Fiyat", margin=dict(l=20, r=20, t=40, b=20), height=400, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    return fig
-
-# ================= GLOBAL VERİLER VE YAN PANEL =================
+# Veritabanını yormamak için toplu borsa analizi tek seferde çekilir
 extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
+
+# Canlı Fiyatlı ve Yüzdelikli 50 coini çekiyoruz
 top_50_data = get_top_50_volume_coins()
+display_options = [item['display'] for item in top_50_data]
 
 # ================= YAN PANEL NAVİGASYON SEÇİMİ =================
-# HATA GİDERİCİ: Yan panel mod seçim butonu global hizada eksiksiz tanımlandı
 st.sidebar.title("🧭 Terminal Navigasyon")
 app_mode = st.sidebar.radio("Mod Seçin:", ["🖥️ Canlı DCA Terminal", "📊 Geriye Dönük Test (Backtest)"], key="global_app_mode_radio")
 
@@ -158,23 +289,35 @@ st.sidebar.markdown("---")
 st.sidebar.title("💳 Cüzdan Durumu")
 st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
 
-selected_display = st.sidebar.selectbox("🔥 Vadeli Coin Seçin", [x['display'] for x in top_50_data], key="sidebar_coin_selectbox_global")
-selected_symbol = [x['symbol'] for x in top_50_data if x['display'] == selected_display][0]
+# COİN SEÇİM KUTUSU
+selected_display = st.sidebar.selectbox("🔥 Vadeli Coin Seçin", display_options, key="sidebar_coin_selectbox_global")
+selected_symbol = [item['symbol'] for item in top_50_data if item['display'] == selected_display][0]
+
+# HATA GİDERİCİ: coin_title değişkeni küresel olarak tanımlandı
 coin_title = selected_symbol.split(':')[0]
 state_prefix = f"{selected_symbol}_"
 
+# ================= VERİTABANINDAN DURUMU GERİ YÜKLEME (RESTORE) =================
 try:
-    db = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).execute()
-    if db.data:
+    db_query = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).execute()
+    if db_query.data:
         db_data = db_query.data[0]
-        for k in ["balance_usd", "l_crypto", "l_usd_spent", "l_avg_price", "s_crypto", "s_usd_spent", "s_avg_price", "log_history"]:
-            st.session_state[f"{state_prefix}{k}"] = db_data[k] if k != "log_history" else (db_data[k] or [])
+        st.session_state[f"{state_prefix}balance_usd"] = db_data["balance_usd"]
         st.session_state[f"{state_prefix}l_status"] = [db_data["l_status_0"], db_data["l_status_1"], db_data["l_status_2"]]
+        st.session_state[f"{state_prefix}l_crypto"] = db_data["l_crypto"]
+        st.session_state[f"{state_prefix}l_usd_spent"] = db_data["l_usd_spent"]
+        st.session_state[f"{state_prefix}l_avg_price"] = db_data["l_avg_price"]
         st.session_state[f"{state_prefix}s_status"] = [db_data["s_status_0"], db_data["s_status_1"], db_data["s_status_2"]]
-except: pass
+        st.session_state[f"{state_prefix}s_crypto"] = db_data["s_crypto"]
+        st.session_state[f"{state_prefix}s_usd_spent"] = db_data["s_usd_spent"]
+        st.session_state[f"{state_prefix}s_avg_price"] = db_data["s_avg_price"]
+        st.session_state[f"{state_prefix}log_history"] = db_data["log_history"] or []
+except:
+    pass
 
 if f"{state_prefix}balance_usd" not in st.session_state:
     st.session_state[f"{state_prefix}balance_usd"] = 100.0
+    st.session_state[f"{state_prefix}initial_balance"] = 100.0
     st.session_state[f"{state_prefix}l_status"] = [False, False, False]
     st.session_state[f"{state_prefix}l_crypto"] = 0.0
     st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
@@ -184,7 +327,9 @@ if f"{state_prefix}balance_usd" not in st.session_state:
     st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
     st.session_state[f"{state_prefix}s_avg_price"] = 0.0
     st.session_state[f"{state_prefix}log_history"] = []
-if f"{state_prefix}locked_prices" not in st.session_state: st.session_state[f"{state_prefix}locked_prices"] = None
+
+if f"{state_prefix}locked_prices" not in st.session_state:
+    st.session_state[f"{state_prefix}locked_prices"] = None
 
 def save_state_to_db():
     try:
@@ -213,8 +358,56 @@ stop_loss_ratio = 0.02
 def send_telegram_msg(message):
     url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
     payload = {"chat_id": telegram_chat_id, "text": message, "parse_mode": "Markdown"}
-    try: requests.post(url, json=payload)
-    except: pass
+    try:
+        requests.post(url, json=payload)
+    except:
+        pass
+
+# NON-REPAINTING NADARAYA-WATSON FİLTRESİ
+def nadaraya_watson_estimator(src, h=8):
+    n = len(src)
+    estimates = np.zeros(n)
+    for i in range(n):
+        past_indices = np.arange(i + 1)
+        weights = np.exp(-((past_indices - i) ** 2) / (2 * h ** 2))
+        estimates[i] = np.sum(src[:i+1] * weights) / np.sum(weights)
+    return estimates
+
+def calculate_nw_bands(df, std_multiplier, col_suffix):
+    df["NW_Merkez"] = nadaraya_watson_estimator(df["Kapanis"].values, h=8)
+    df["Fark"] = df["Kapanis"] - df["NW_Merkez"]
+    df["Sapma_Std"] = df["Fark"].rolling(window=20).std()
+    df[f"NW_Ust{col_suffix}"] = df["NW_Merkez"] + (std_multiplier * df["Sapma_Std"])
+    df[f"NW_Alt{col_suffix}"] = df["NW_Merkez"] - (std_multiplier * df["Sapma_Std"])
+    return df
+
+# ================= ENTEGRE EDİLMİŞ ETKİLEŞİMLİ GÖSTERİM FONKSİYONU (PLOTLY) =================
+def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l_avg=0.0, s_avg=0.0):
+    fig = go.Figure()
+    # Ana anlık fiyat çizgisi
+    fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=df_subset[price_col], name="Anlık Fiyat", line=dict(color='royalblue', width=2)))
+    # Üst direnç bandı
+    fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=df_subset[ust_band_col], name="Üst Band (Satış)", line=dict(color='crimson', width=1.5, dash='dash')))
+    # Alt destek bandı
+    fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=df_subset[alt_band_col], name="Alt Band (Alış)", line=dict(color='limegreen', width=1.5, dash='dash')))
+    
+    # Ortalama pozisyon maliyet çizgileri
+    if l_avg > 0:
+        fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=[l_avg]*len(df_subset), name="Long Maliyet Ort.", line=dict(color='green', width=1.5)))
+    if s_avg > 0:
+        fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=[s_avg]*len(df_subset), name="Short Maliyet Ort.", line=dict(color='red', width=1.5)))
+        
+    fig.update_layout(
+        title=title,
+        template="plotly_dark",
+        xaxis_title="Zaman",
+        yaxis_title="Fiyat (USDT)",
+        hovermode="x unified",  # İmlecin fiyata göre koordinatları canlı takip etmesini sağlar
+        margin=dict(l=20, r=20, t=40, b=20),
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
 
 # ================= MOD 1: GERİYE DÖNÜK TEST (BACKTEST) MODU =================
 if app_mode == "📊 Geriye Dönük Test (Backtest)":
@@ -474,7 +667,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 st.session_state[f"{state_prefix}locked_prices"] = None
                 nw_alt_5m, nw_alt_1h, nw_alt_4h = dyn_alt_5m, dyn_alt_1h, dyn_alt_4h
                 nw_ust_5m, nw_ust_1h, nw_ust_4h = dyn_ust_5m, dyn_ust_1h, dyn_ust_4h
-
+            
             rsi_1m_val = df_1m.iloc[-1]["RSI"]
             rsi_5m_val = df_5m.iloc[-1]["RSI"]
             rsi_15m_val = df_15m.iloc[-1]["RSI"]
@@ -489,13 +682,17 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             # LONG ÇIKIŞLARI
             if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                 l_tp = st.session_state[f"{state_prefix}l_avg_price"] * (1 + target_profit_ratio)
-                if st.session_state[f"{state_prefix}l_status"][2] and current_price <= (nw_alt_4h * (1 - stop_loss_ratio)):
-                    st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                    msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
-                    send_telegram_msg(msg)
-                    st.session_state[f"{state_prefix}log_history"].append(msg)
-                    st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"], st.session_state[f"{state_prefix}l_status"] = 0.0, 0.0, 0.0, [False, False, False]
-                    save_state_to_db()
+                
+                if st.session_state[f"{state_prefix}l_status"][2]:
+                    l_stop = nw_alt_4h * (1 - stop_loss_ratio)
+                    if current_price <= l_stop:
+                        st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
+                        msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
+                        send_telegram_msg(msg)
+                        st.session_state[f"{state_prefix}log_history"].append(msg)
+                        st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"], st.session_state[f"{state_prefix}l_status"] = 0.0, 0.0, 0.0, [False, False, False]
+                        save_state_to_db()
+
                 elif current_price >= l_tp:
                     st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
                     msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
@@ -508,6 +705,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                 s_stop = st.session_state[f"{state_prefix}s_avg_price"] * (1 + stop_loss_ratio)
                 s_tp = st.session_state[f"{state_prefix}s_avg_price"] * (1 - target_profit_ratio)
+
                 if st.session_state[f"{state_prefix}s_status"][2] and current_price >= s_stop:
                     pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
                     st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
@@ -516,6 +714,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.session_state[f"{state_prefix}log_history"].append(msg)
                     st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"], st.session_state[f"{state_prefix}s_status"] = 0.0, 0.0, 0.0, [False, False, False]
                     save_state_to_db()
+
                 elif current_price <= s_tp:
                     pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
                     st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
@@ -559,24 +758,25 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.subheader("📈 Canlı Fiyat ve Nadaraya-Watson Zarf Grafikleri")
                     tab_1m, tab_5m, tab_15m, tab_1h, tab_4h, tab_1d = st.tabs(["⏱️ 1m", "⏱️ 5m", "⏱️ 15m", "⏱️ 1h", "⏱️ 4h", "🌎 1d"])
                     
+                    # HATA GİDERİCİ: Tüm sekmelerin Plotly grafiklerine benzersiz statik key parametreleri eklendi (ID çakışması kesin olarak çözüldü)
                     with tab_1m:
                         df_subset = df_1m.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_1m_uq")
                     with tab_5m:
                         df_subset = df_5m.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_5m_uq")
                     with tab_15m:
                         df_subset = df_15m.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_15m_uq")
                     with tab_1h:
                         df_subset = df_1h.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_1h_uq")
                     with tab_4h:
                         df_subset = df_4h.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_4h_uq")
                     with tab_1d:
                         df_subset = df_1d.tail(30)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True)
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key="live_plotly_1d_uq")
 
                 st.markdown("---")
                 st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
@@ -658,6 +858,22 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             if st.session_state[f"{state_prefix}log_history"]:
                 st.write("📜 **Son Sinyaller (Log)**")
                 for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]): st.write(log)
+
+            # SIFIRLAMA BUTONU
+            st.markdown("---")
+            if st.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="reset_all_positions_button"):
+                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                st.session_state[f"{state_prefix}l_crypto"] = 0.0
+                st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
+                st.session_state[f"{state_prefix}l_avg_price"] = 0.0
+                st.session_state[f"{state_prefix}s_crypto"] = 0.0
+                st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
+                st.session_state[f"{state_prefix}s_avg_price"] = 0.0
+                st.session_state[f"{state_prefix}balance_usd"] = 100.0
+                st.session_state[f"{state_prefix}locked_prices"] = None
+                save_state_to_db()
+                st.rerun()
 
         except Exception as e:
             st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
