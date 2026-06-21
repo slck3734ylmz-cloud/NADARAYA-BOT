@@ -15,16 +15,17 @@ telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "665969213"
 # =========================================================================
 
-# BINANCE FUTURES (USDT-M) BAĞLANTISI
-exchange = ccxt.binanceusdm()
+# BYBIT FUTURES BAĞLANTISI (Amerika IP engellerini aşmak için Bybit altyapısına geçtik)
+exchange = ccxt.bybit()
 
-# ================= ULTRA-GÜVENLİ BİNANCE FUTURES 50 PERPETUAL TARAYICI =================
+# ================= BYBIT FUTURES EN YÜKSEK HACİMLİ 50 PERPETUAL TARAYICI =================
 @st.cache_data(ttl=300)  # Listeyi 5 dakikada bir günceller
 def get_top_50_volume_coins():
     try:
         tickers = exchange.fetch_tickers()
         usd_tickers = []
         for symbol, ticker in tickers.items():
+            # Bybit Sürekli Vadeli (Perpetual - .P) kontratları filtrele (:USDT ile biter)
             if symbol.endswith(':USDT'):
                 # Boş veri kontrolü (None-guard)
                 quote_vol = ticker.get('quoteVolume')
