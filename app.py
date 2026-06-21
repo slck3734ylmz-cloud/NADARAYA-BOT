@@ -36,7 +36,6 @@ st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 st.markdown(
     """
     <style>
-    /* Ana ekranın ve tüm dikey blokların güncellenirken şeffaflaşmasını tamamen engeller */
     div[data-testid="stAppViewBlockContainer"], 
     div[data-testid="stVerticalBlock"], 
     [data-testid="stMain"],
@@ -45,12 +44,10 @@ st.markdown(
         filter: none !important;
         transition: none !important;
     }
-    /* Güncellenen grafiklerin veya markdown alanlarının sönükleşmesini önler */
     .element-container, .stPlotlyChart, .stMarkdown {
         opacity: 1.0 !important;
         transition: none !important;
     }
-    /* Sağ üstteki yükleniyor/çalışıyor simgelerini tamamen gizler */
     div[data-testid="stStatusWidget"], [data-testid="stStatusWidget"] {
         display: none !important;
         visibility: hidden !important;
@@ -60,17 +57,14 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz
 plt.style.use('dark_background')
 
-# Telegram ve Supabase Ayarları
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
 supabase_url = "https://ahnwbxfghccotwnlhzgl.supabase.co"
 supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFobndieFfnaGNjb3R3bmxoemdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwMTI3NzcsImV4cCI6MjA5NzU4ODc3N30.9cR5NBti19ddH7UivdcikYFoCRwk42mIkOkElYqT2Oc"
 supabase: Client = create_client(supabase_url, supabase_key)
 
-# ================= MATEMATİKSEL VE YARDIMCI FONKSİYONLAR =================
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(period).mean()
@@ -174,78 +168,86 @@ def calculate_nw_bands(df, std_multiplier, col_suffix):
     df[f"NW_Alt{col_suffix}"] = df["NW_Merkez"] - (std_multiplier * df["Sapma_Std"])
     return df
 
-# ================= EN SON GÖRSEL GELİŞTİRME: ÇERCEVELİ VE MUM GRAFİKLİ PROFESYONEL ÇİZİCİ =================
+# ================= PROFESYONEL BORSA-STİLİ GRAFİK ÇİZİCİ =================
 def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l_avg=0.0, s_avg=0.0):
     fig = go.Figure()
-    
-    # 1. Alt Zarf Bandı (Alış Sınırı)
+
+    # --- Üst/Alt zarf bandı + kanal dolgusu (TradingView tarzı ince neon çizgiler) ---
     fig.add_trace(go.Scatter(
-        x=df_subset["Zaman"], 
-        y=df_subset[alt_band_col], 
-        name="Alt Band (Alış)", 
-        line=dict(color='rgba(50, 205, 50, 0.45)', width=1.5, dash='dash'),
+        x=df_subset["Zaman"], y=df_subset[alt_band_col], name="Alt Band (Alış)",
+        line=dict(color='rgba(0, 230, 118, 0.85)', width=1.6, dash='dot'),
         showlegend=True
     ))
-    
-    # 2. Üst Zarf Bandı (Satış Sınırı) + Kanal Alanı Gölgeleme (fill='tonexty')
     fig.add_trace(go.Scatter(
-        x=df_subset["Zaman"], 
-        y=df_subset[ust_band_col], 
-        name="Üst Band (Satış)", 
-        line=dict(color='rgba(220, 20, 60, 0.45)', width=1.5, dash='dash'),
-        fill='tonexty',
-        fillcolor='rgba(255, 255, 255, 0.03)', # Çok hafif ve asil yarı şeffaf kanal dolgusu
+        x=df_subset["Zaman"], y=df_subset[ust_band_col], name="Üst Band (Satış)",
+        line=dict(color='rgba(255, 61, 87, 0.85)', width=1.6, dash='dot'),
+        fill='tonexty', fillcolor='rgba(120, 130, 255, 0.045)',
         showlegend=True
     ))
 
-    # 3. Profesyonel Mum Grafikleri (Candlesticks)
+    # --- Profesyonel mum grafiği (Binance/TradingView renk paleti, ince fitil çizgileri) ---
     fig.add_trace(go.Candlestick(
         x=df_subset["Zaman"],
-        open=df_subset["Acilis"],
-        high=df_subset["Yuksek"],
-        low=df_subset["Dusuk"],
-        close=df_subset[price_col],
+        open=df_subset["Acilis"], high=df_subset["Yuksek"],
+        low=df_subset["Dusuk"], close=df_subset[price_col],
         name="Fiyat (OHLC)",
-        increasing_line_color='rgba(50, 205, 50, 0.95)', 
-        decreasing_line_color='rgba(220, 20, 60, 0.95)'
+        increasing=dict(line=dict(color='#0ECB81', width=1), fillcolor='#0ECB81'),
+        decreasing=dict(line=dict(color='#F6465D', width=1), fillcolor='#F6465D'),
+        whiskerwidth=0.4
     ))
-    
-    # Ortalama Maliyet Çizgileri
-    if l_avg > 0: 
-        fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=[l_avg]*len(df_subset), name="Long Maliyet Ort.", line=dict(color='green', width=1.5)))
-    if s_avg > 0: 
-        fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=[s_avg]*len(df_subset), name="Short Maliyet Ort.", line=dict(color='red', width=1.5)))
-        
-    fig.update_layout(
-        title=title, 
-        template="plotly_dark", 
-        xaxis_title="Zaman", 
-        yaxis_title="Fiyat", 
-        margin=dict(l=20, r=20, t=40, b=20), 
-        height=400, 
-        xaxis_rangeslider_visible=False, # Alttaki gereksiz barı gizleyerek sıkışmayı önler
-        hovermode="x unified", # Fareyle gelindiğinde tüm verileri asil bir bilgi kartında toplar
-        legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5) # Lejantı alta alarak üstteki çakışmayı giderdik
+
+    # --- Ortalama maliyet çizgileri ---
+    if l_avg > 0:
+        fig.add_trace(go.Scatter(
+            x=df_subset["Zaman"], y=[l_avg]*len(df_subset), name="Long Maliyet Ort.",
+            line=dict(color='#00E676', width=1.3, dash='longdash')
+        ))
+    if s_avg > 0:
+        fig.add_trace(go.Scatter(
+            x=df_subset["Zaman"], y=[s_avg]*len(df_subset), name="Short Maliyet Ort.",
+            line=dict(color='#FF5252', width=1.3, dash='longdash')
+        ))
+
+    # --- Son fiyat için sağ kenarda etiketli referans çizgisi ---
+    last_price = df_subset[price_col].iloc[-1]
+    fig.add_hline(
+        y=last_price, line=dict(color='rgba(255,255,255,0.35)', width=1, dash='dot'),
+        annotation_text=f" {last_price:,.2f} ", annotation_position="right",
+        annotation_font=dict(color='#0B0E11', size=11, family="Arial Black"),
+        annotation_bgcolor='#F0B90B', annotation_borderpad=4
     )
-    
-    # Grafiğin etrafını asil bir kutu gibi çevreleyen borsa tipi ince beyaz eksen çerçeveleri (mirror=True):
+
+    fig.update_layout(
+        title=dict(text=f"<b>{title}</b>", font=dict(size=15, color='#E8EAED', family="Arial"), x=0.01, xanchor='left'),
+        template="plotly_dark",
+        plot_bgcolor='#0B0E11',
+        paper_bgcolor='#0B0E11',
+        font=dict(color='#B7BDC6', family="Arial"),
+        margin=dict(l=10, r=60, t=45, b=10),
+        height=440,
+        xaxis_rangeslider_visible=False,
+        hovermode="x unified",
+        hoverlabel=dict(bgcolor='#1E2329', font_size=12, font_family="Arial", bordercolor='#2B3139'),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0.0,
+            bgcolor='rgba(0,0,0,0)', font=dict(size=11, color='#B7BDC6')
+        ),
+        dragmode='pan'
+    )
+
     fig.update_xaxes(
-        showgrid=True, 
-        gridcolor='rgba(255, 255, 255, 0.05)', 
-        showline=True, 
-        linewidth=1, 
-        linecolor='rgba(255, 255, 255, 0.15)', 
-        mirror=True
+        showgrid=True, gridcolor='rgba(240, 185, 11, 0.06)', gridwidth=1,
+        showline=True, linewidth=1, linecolor='#2B3139', mirror=True,
+        rangeslider_visible=False, showspikes=True, spikecolor='#F0B90B',
+        spikethickness=1, spikedash='dot', spikemode='across'
     )
     fig.update_yaxes(
-        showgrid=True, 
-        gridcolor='rgba(255, 255, 255, 0.05)', 
-        showline=True, 
-        linewidth=1, 
-        linecolor='rgba(255, 255, 255, 0.15)', 
-        mirror=True
+        showgrid=True, gridcolor='rgba(240, 185, 11, 0.06)', gridwidth=1,
+        showline=True, linewidth=1, linecolor='#2B3139', mirror=True,
+        side='right', showspikes=True, spikecolor='#F0B90B',
+        spikethickness=1, spikedash='dot'
     )
-    
+
     return fig
 
 # Global veriler
@@ -278,7 +280,6 @@ else:
 if f"{state_prefix}balance_usd" not in st.session_state:
     loaded_from_db = False
     try:
-        # En yeni güncellenen tek bir kaydı çekmek için id'ye göre azalan sırada çeker.
         db_query = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).order("id", descending=True).limit(1).execute()
         if db_query.data:
             db_data = db_query.data[0]
@@ -290,7 +291,7 @@ if f"{state_prefix}balance_usd" not in st.session_state:
             st.session_state[f"{state_prefix}s_usd_spent"] = db_data.get("s_usd_spent", 0.0)
             st.session_state[f"{state_prefix}s_avg_price"] = db_data.get("s_avg_price", 0.0)
             st.session_state[f"{state_prefix}log_history"] = db_data.get("log_history") or []
-            
+
             st.session_state[f"{state_prefix}l_status"] = [
                 db_data.get("l_status_0", False),
                 db_data.get("l_status_1", False),
@@ -301,8 +302,7 @@ if f"{state_prefix}balance_usd" not in st.session_state:
                 db_data.get("s_status_1", False),
                 db_data.get("s_status_2", False)
             ]
-            
-            # Kaydedilmiş kilit fiyatlarını yükler (Esnek kontrolle veritabanında yoksa 0.0 atanır)
+
             st.session_state[f"{state_prefix}l_entry_prices"] = [
                 db_data.get("l_entry_0", 0.0) if "l_entry_0" in db_data else 0.0,
                 db_data.get("l_entry_1", 0.0) if "l_entry_1" in db_data else 0.0,
@@ -403,25 +403,21 @@ main_container = st.empty()
 @st.fragment(run_every="10s")
 def live_dca_fragment():
     try:
-        # 1. ANLIK BORSA TICKER VERİSİ SORGULAMA
         live_ticker = exchange.fetch_ticker(selected_symbol)
         current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
         price_change_24h = live_ticker.get('percentage') or 0.0
 
-        # 2. KÜRESEL 4H TREND HESAPLAMASI
         raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=120)
         df_4h_trend = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_4h_trend["EMA_200"] = df_4h_trend["Kapanis"].ewm(span=200, adjust=False).mean()
         trend_4h = "YUKARI (BOĞA)" if df_4h_trend.iloc[-1]["Kapanis"] > df_4h_trend.iloc[-1]["EMA_200"] else "AŞAĞI (AYI)"
         warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
 
-        # 3. ANLIK VOLATİLİTE ÖLÇÜMÜ (Tansiyon Algoritması)
         raw_vol = exchange.fetch_ohlcv(selected_symbol, "15m", limit=120)
         df_vol = pd.DataFrame(raw_vol, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         is_volatile = df_vol["Kapanis"].rolling(20).std().iloc[-1] > df_vol["Kapanis"].rolling(20).std().median()
         market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
-        # =================== 4. NATIVE VERİ SORGULAMALARI (120 MUM TAMPONLU) ===================
         raw_1m = exchange.fetch_ohlcv(selected_symbol, "1m", limit=120)
         df_1m = pd.DataFrame(raw_1m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_1m["Zaman"] = pd.to_datetime(df_1m["Zaman"], unit="ms")
@@ -461,8 +457,6 @@ def live_dca_fragment():
         df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
         extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
 
-        # =================== 5. SABİT HİYERARŞİ HESAPLAMASI (5m / 1h / 4h) ===================
-        # Kademeler 5m, 1h ve 4h olarak hesaplanır.
         raw_k1_alt = df_5m.iloc[-2]["NW_Alt_5m"]
         raw_k2_alt = df_1h.iloc[-2]["NW_Alt_1h"]
         raw_k3_alt = df_4h.iloc[-2]["NW_Alt_4h"]
@@ -471,19 +465,14 @@ def live_dca_fragment():
         raw_k2_ust = df_1h.iloc[-2]["NW_Ust_1h"]
         raw_k3_ust = df_4h.iloc[-2]["NW_Ust_4h"]
 
-        # --- Matematiksel Sıralama Koruması (Sorting Guard) ---
-        # LONG Seviyeleri (Her zaman K1 > K2 > K3 olmalıdır)
         k1_alt_base = raw_k1_alt
         k2_alt_base = min(raw_k2_alt, k1_alt_base * 0.997)
         k3_alt_base = min(raw_k3_alt, k2_alt_base * 0.997)
 
-        # SHORT Seviyeleri (Her zaman K1 < K2 < K3 olmalıdır)
         k1_ust_base = raw_k1_ust
         k2_ust_base = max(raw_k2_ust, k1_ust_base * 1.003)
         k3_ust_base = max(raw_k3_ust, k2_ust_base * 1.003)
 
-        # --- Dinamik Sabitleme (Level Locking) Mantığı ---
-        # Alım yapılan seviyelerin fiyatları sabitlenir, alınmayanlar hareketli olarak yenilenmeye devam eder.
         nw_alt_5m = st.session_state[f"{state_prefix}l_entry_prices"][0] if st.session_state[f"{state_prefix}l_status"][0] else k1_alt_base
         nw_alt_1h = st.session_state[f"{state_prefix}l_entry_prices"][1] if st.session_state[f"{state_prefix}l_status"][1] else k2_alt_base
         nw_alt_4h = st.session_state[f"{state_prefix}l_entry_prices"][2] if st.session_state[f"{state_prefix}l_status"][2] else k3_alt_base
@@ -498,7 +487,6 @@ def live_dca_fragment():
 
         if manual_lock:
             if st.session_state[f"{state_prefix}locked_prices"] is None:
-                # manual_lock için kilitli fiyatlar tanımlı olan nw_alt değişkenleri üzerinden güvenli hale getirildi.
                 st.session_state[f"{state_prefix}locked_prices"] = {"nw_alt_5m": nw_alt_5m, "nw_alt_1h": nw_alt_1h, "nw_alt_4h": nw_alt_4h, "nw_ust_5m": nw_ust_5m, "nw_ust_1h": nw_ust_1h, "nw_ust_4h": nw_ust_4h}
             nw_alt_5m, nw_alt_1h, nw_alt_4h = st.session_state[f"{state_prefix}locked_prices"]["nw_alt_5m"], st.session_state[f"{state_prefix}locked_prices"]["nw_alt_1h"], st.session_state[f"{state_prefix}locked_prices"]["nw_alt_4h"]
             nw_ust_5m, nw_ust_1h, nw_ust_4h = st.session_state[f"{state_prefix}locked_prices"]["nw_ust_5m"], st.session_state[f"{state_prefix}locked_prices"]["nw_ust_1h"], st.session_state[f"{state_prefix}locked_prices"]["nw_ust_4h"]
@@ -507,7 +495,6 @@ def live_dca_fragment():
 
         rsi_1m_val, rsi_5m_val, rsi_15m_val, rsi_1h_val, rsi_4h_val, rsi_1d_val = df_1m.iloc[-1]["RSI"], df_5m.iloc[-1]["RSI"], df_15m.iloc[-1]["RSI"], df_1h.iloc[-1]["RSI"], df_4h.iloc[-1]["RSI"], df_1d.iloc[-1]["RSI"]
 
-        # LONG ÇIKIŞLARI
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
             l_tp = st.session_state[f"{state_prefix}l_avg_price"] * (1 + target_profit_ratio)
             if st.session_state[f"{state_prefix}l_status"][2] and current_price <= (nw_alt_4h * (1 - stop_loss_ratio)):
@@ -529,7 +516,6 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
                 save_state_to_db()
 
-        # SHORT POZİSYON ÇIKIŞLARI
         if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
             s_stop = st.session_state[f"{state_prefix}s_avg_price"] * (1 + stop_loss_ratio)
             s_tp = st.session_state[f"{state_prefix}s_avg_price"] * (1 - target_profit_ratio)
@@ -554,14 +540,12 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}s_entry_prices"] = [0.0, 0.0, 0.0]
                 save_state_to_db()
 
-        # LONG GİRİŞLERİ
         for idx, th, val in zip([0, 1, 2], [nw_alt_5m, nw_alt_1h, nw_alt_4h], layer_sizes):
             if current_price <= th and (idx == 0 or st.session_state[f"{state_prefix}l_status"][idx-1]) and not st.session_state[f"{state_prefix}l_status"][idx]:
                 st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
                 st.session_state[f"{state_prefix}l_crypto"] += val
                 st.session_state[f"{state_prefix}l_usd_spent"] += val * current_price
                 st.session_state[f"{state_prefix}l_status"][idx] = True
-                # Alım yapılan seviyenin fiyatı tam o andaki değere sabitlenir
                 st.session_state[f"{state_prefix}l_entry_prices"][idx] = current_price
                 st.session_state[f"{state_prefix}l_avg_price"] = st.session_state[f"{state_prefix}l_usd_spent"] / st.session_state[f"{state_prefix}l_crypto"]
                 msg = f"📈 *LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
@@ -570,14 +554,12 @@ def live_dca_fragment():
                 save_state_to_db()
                 break
 
-        # SHORT GİRİŞLERİ
         for idx, th, val in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes):
             if current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]:
                 st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
                 st.session_state[f"{state_prefix}s_crypto"] += val
                 st.session_state[f"{state_prefix}s_usd_spent"] += val * current_price
                 st.session_state[f"{state_prefix}s_status"][idx] = True
-                # Açılış yapılan seviyenin fiyatı tam o andaki değere sabitlenir
                 st.session_state[f"{state_prefix}s_entry_prices"][idx] = current_price
                 st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
                 msg = f"📈 *SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
@@ -586,7 +568,6 @@ def live_dca_fragment():
                 save_state_to_db()
                 break
 
-        # ARAYÜZÜ DOĞRUDAN ÇİZİYORUZ
         col_left, col_right = st.columns([1.6, 1])
     
         with col_left:
@@ -612,7 +593,6 @@ def live_dca_fragment():
                 df_subset = df_1d.tail(30)
                 st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key=f"{state_prefix}chart_1d")
 
-            # DCA KADEMELERİ
             st.markdown("---")
             st.write("🎯 **Canlı Sinyal DCA Yönetim Kartı**")
             col_l, col_s = st.columns(2)
@@ -678,7 +658,6 @@ def live_dca_fragment():
                 st.write("**15m (Normal)**"); st.code(f"{rsi_15m_val:.1f}")
                 st.write("**1d (Ana Trend)**"); st.code(f"{rsi_1d_val:.1f}")
 
-        # Günlük Piyasa Liderleri
         st.markdown("---")
         st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
         col_g, col_lo = st.columns(2)
