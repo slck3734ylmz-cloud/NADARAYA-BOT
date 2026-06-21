@@ -4,8 +4,7 @@ import pandas as pd
 import numpy as np
 import time
 import requests
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
+import plotly.graph_objects as go
 from supabase import create_client, Client
 
 # ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
@@ -578,6 +577,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
 
     main_container = st.empty()
 
+    # Orijinal kıpırdamasız ve kararmasız while True döngüsü geri yüklendi (st.rerun silindi)
     while True:
         try:
             # 1. ANLIK BORSA TICKER VERİSİ SORGULAMA
@@ -639,7 +639,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
             df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
             df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
-            df_1d["RSI"] = calculate_rsi(df_1d["Kapanis"])
 
             df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
 
@@ -697,10 +696,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                         msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
                         send_telegram_msg(msg)
                         st.session_state[f"{state_prefix}log_history"].append(msg)
-                        st.session_state[f"{state_prefix}l_crypto"] = 0.0
-                        st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
-                        st.session_state[f"{state_prefix}l_avg_price"] = 0.0
-                        st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                        st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"], st.session_state[f"{state_prefix}l_status"] = 0.0, 0.0, 0.0, [False, False, False]
                         save_state_to_db()
 
                 elif current_price >= l_tp:
@@ -708,10 +704,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
                     send_telegram_msg(msg)
                     st.session_state[f"{state_prefix}log_history"].append(msg)
-                    st.session_state[f"{state_prefix}l_crypto"] = 0.0
-                    st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
-                    st.session_state[f"{state_prefix}l_avg_price"] = 0.0
-                    st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                    st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"], st.session_state[f"{state_prefix}l_status"] = 0.0, 0.0, 0.0, [False, False, False]
                     save_state_to_db()
 
             # SHORT POZİSYON ÇIKIŞLARI
@@ -725,10 +718,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     msg = f"🔴 *SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
                     send_telegram_msg(msg)
                     st.session_state[f"{state_prefix}log_history"].append(msg)
-                    st.session_state[f"{state_prefix}s_crypto"] = 0.0
-                    st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
-                    st.session_state[f"{state_prefix}s_avg_price"] = 0.0
-                    st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                    st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"], st.session_state[f"{state_prefix}s_status"] = 0.0, 0.0, 0.0, [False, False, False]
                     save_state_to_db()
 
                 elif current_price <= s_tp:
@@ -737,10 +727,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     msg = f"🟢 *SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
                     send_telegram_msg(msg)
                     st.session_state[f"{state_prefix}log_history"].append(msg)
-                    st.session_state[f"{state_prefix}s_crypto"] = 0.0
-                    st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
-                    st.session_state[f"{state_prefix}s_avg_price"] = 0.0
-                    st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                    st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"], st.session_state[f"{state_prefix}s_status"] = 0.0, 0.0, 0.0, [False, False, False]
                     save_state_to_db()
 
             # LONG GİRİŞLERİ
@@ -777,18 +764,25 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.subheader("📈 Canlı Fiyat ve Nadaraya-Watson Zarf Grafikleri")
                     tab_1m, tab_5m, tab_15m, tab_1h, tab_4h, tab_1d = st.tabs(["⏱️ 1m", "⏱️ 5m", "⏱️ 15m", "⏱️ 1h", "⏱️ 4h", "🌎 1d"])
                     
+                    # HATA GİDERİCİ: df_subset değişkenleri her sekmenin kendi verisini (df_1m, df_5m, df_15m, df_1h, df_4h) çizecek şekilde güncellendi (df NameError hatası giderildi)
                     with tab_1m:
-                        st.plotly_chart(draw_plotly_chart(df_1m.tail(100), "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_1m_uq")
+                        df_subset = df_1m.tail(100)
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_1m_uq")
                     with tab_5m:
-                        st.plotly_chart(draw_plotly_chart(df_5m.tail(100), "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_5m_uq")
+                        df_subset = df_5m.tail(100)
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_5m_uq")
                     with tab_15m:
-                        st.plotly_chart(draw_plotly_chart(df_15m.tail(100), "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_15m_uq")
+                        df_subset = df_15m.tail(100)
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_15m_uq")
                     with tab_1h:
-                        st.plotly_chart(draw_plotly_chart(df_1h.tail(100), "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_1h_uq")
+                        df_subset = df_1h.tail(100)
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_1h_uq")
                     with tab_4h:
-                        st.plotly_chart(draw_plotly_chart(df_4h.tail(100), "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_4h_uq")
+                        df_subset = df_4h.tail(100)
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_4h_uq")
                     with tab_1d:
-                        st.plotly_chart(draw_plotly_chart(df_1d.tail(30), "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key="live_plotly_1d_uq")
+                        df_subset = df_1d.tail(30)
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key="live_plotly_1d_uq")
 
                 st.markdown("---")
                 st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
@@ -887,12 +881,12 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 save_state_to_db()
                 st.rerun()
 
-    except Exception as e:
-        st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
-        time.sleep(5)  # Hata durumunda CPU yorulmasını önlemek için bekleme eklendi
-        
-    # ================= GERİ SAYIM SAYACI =================
-    for remaining in range(10, 0, -1):
-        countdown_placeholder.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
-        time.sleep(1)
-    countdown_placeholder.write("🔄 Taranıyor...")
+        except Exception as e:
+            st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
+            time.sleep(5)  # Hata durumunda CPU yorulmasını önlemek için bekleme eklendi
+            
+        # ================= GERİ SAYIM SAYACI =================
+        for remaining in range(10, 0, -1):
+            countdown_placeholder.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
+            time.sleep(1)
+        countdown_placeholder.write("🔄 Taranıyor...")
