@@ -344,7 +344,10 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
     countdown_placeholder = st.sidebar.empty()
     main_container = st.empty()
 
+    loop_counter = 0
+
     while True:
+        loop_counter += 1
         try:
             live_ticker = exchange.fetch_ticker(selected_symbol)
             current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
@@ -488,22 +491,22 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     
                     with tab_1m:
                         df_subset = df_1m.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_1m")
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_1m_{loop_counter}")
                     with tab_5m:
                         df_subset = df_5m.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_5m")
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_5m_{loop_counter}")
                     with tab_15m:
                         df_subset = df_15m.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_15m")
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_15m_{loop_counter}")
                     with tab_1h:
                         df_subset = df_1h.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_1h")
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_1h_{loop_counter}")
                     with tab_4h:
                         df_subset = df_4h.tail(100)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_4h")
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_4h_{loop_counter}")
                     with tab_1d:
                         df_subset = df_1d.tail(30)
-                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key=f"{state_prefix}chart_1d")
+                        st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key=f"{state_prefix}chart_1d_{loop_counter}")
 
                 st.markdown("---")
                 st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
