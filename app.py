@@ -35,35 +35,40 @@ if not check_password():
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
-# ================= SEAMLESS / FLICKER-FREE (KIPIRDAMASIZ) CSS ENJEKSİYONU =================
+# ================= GÜÇLENDİRİLMİŞ SEAMLESS / FLICKER-FREE (KARARMA ÖNLEYİCİ) CSS =================
 st.markdown(
     """
     <style>
-    /* Yenileme esnasında ana bloğun kararmasını (dimming efekti) kesin olarak engeller */
-    div[data-testid="stAppViewBlockContainer"] {
-        opacity: 1.0 !important;
-        transition: none !important;
-    }
-    /* Tüm sayfa arka plan kararmasını engeller */
-    div[data-testid="stAppViewContainer"] {
-        opacity: 1.0 !important;
-        transition: none !important;
-    }
-    /* Streamlit'in yükleniyor durumundaki (data-loading) karartma sınıflarını kilitler */
-    [data-loading="true"] {
+    /* 1. Tüm ana kapsayıcıların kararmasını, puslu (blur) veya yarı saydam olmasını kesinlikle engeller */
+    [data-testid="stAppViewContainer"], 
+    [data-testid="stAppViewBlockContainer"], 
+    [data-testid="stMain"],
+    .stApp,
+    #root,
+    div[class*="st-emotion-cache"] {
         opacity: 1.0 !important;
         filter: none !important;
+        transition: none !important;
     }
-    /* Sağ üst köşedeki göz yoran "Running..." (Çalışıyor) simgesini gizler */
-    div[data-testid="stStatusWidget"] {
+    /* 2. Herhangi bir yükleme (loading) durumunda sayfadaki tüm bileşenlerin opaklığını zorla %100 yapar */
+    [data-loading="true"], [data-loading="true"] * {
+        opacity: 1.0 !important;
+        filter: none !important;
+        transition: none !important;
+    }
+    /* 3. Sağ üstteki dönen "Running..." simgesini ve tüm yükleme barlarını tamamen görünmez yapar */
+    div[data-testid="stStatusWidget"],
+    .stStatusWidget,
+    div[class*="spinner"] {
         display: none !important;
         visibility: hidden !important;
+        opacity: 0 !important;
     }
     </style>
     """,
     unsafe_allow_html=True
 )
-# ==========================================================================================
+# ==================================================================================================
 
 # Telegram ve Supabase Ayarları
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
@@ -780,15 +785,15 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 with tab_1d:
                     st.plotly_chart(draw_plotly_chart(df_1d.tail(30), "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key="live_plotly_1d_uq")
 
-                st.markdown("---")
-                st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
-                col_liq_l, col_liq_s = st.columns(2)
-                with col_liq_l:
-                    st.info("🔴 LONG LİKİDASYON HAVUZLARI")
-                    if not df_long_liq.empty: st.table(df_long_liq.reset_index(drop=True))
-                with col_liq_s:
-                    st.error("🟢 SHORT LİKİDASYON HAVUZLARI")
-                    if not df_short_liq.empty: st.table(df_short_liq.reset_index(drop=True))
+            st.markdown("---")
+            st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
+            col_liq_l, col_liq_s = st.columns(2)
+            with col_liq_l:
+                st.info("🔴 LONG LİKİDASYON HAVUZLARI")
+                if not df_long_liq.empty: st.table(df_long_liq.reset_index(drop=True))
+            with col_liq_s:
+                st.error("🟢 SHORT LİKİDASYON HAVUZLARI")
+                if not df_short_liq.empty: st.table(df_short_liq.reset_index(drop=True))
 
             with col_right:
                 st.subheader(f"📊 {coin_title} Canlı Terminal")
@@ -878,7 +883,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 st.rerun()
 
     except Exception as e:
-        st.sidebar.error(f"Hata oluştu: {e}")
+        st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
         
     # ================= GERİ SAYIM VE GÜVENLİK YENİDEN TETİKLEME =================
     for remaining in range(10, 0, -1):
