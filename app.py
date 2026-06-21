@@ -15,62 +15,58 @@ telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "665969213"
 # =========================================================================
 
-# GATE.IO FUTURES BAĞLANTISI (Amerika IP engelsiz ve en kararlı bağlantı)
+# GATE.IO FUTURES BAĞLANTISI (Vadeli Modu Aktif)
 exchange = ccxt.gate({
     'options': {
         'defaultType': 'swap',
     }
 })
 
-# ================= GÖMÜLÜ CANLI FİYAT, YÜZDELİKLİ VE FONLAMA ORANLI TARAYICI =================
-@st.cache_data(ttl=300)  # Sitenin kasmaması için listeyi 5 dakikada bir günceller
+# ================= GATE.IO FUTURES EN YÜKSEK HACİMLİ 50 PERPETUAL TARAYICI =================
+@st.cache_data(ttl=300)
 def get_top_50_volume_coins():
     try:
         tickers = exchange.fetch_tickers()
         usd_tickers = []
         for symbol, ticker in tickers.items():
             if symbol.endswith(':USDT'):
-                # Boş veri kontrolü (None-guard)
                 quote_vol = ticker.get('quoteVolume')
                 if quote_vol is None:
                     base_vol = ticker.get('baseVolume') or 0.0
                     last_price = ticker.get('last') or ticker.get('close') or 0.0
                     quote_vol = base_vol * last_price
                 
-                # Canlı Fonlama Oranı (Funding Rate) Ayıklama
-                raw_info = ticker.get('info') or {}
-                funding_rate = float(raw_info.get('funding_rate', 0.0)) * 100.0  # Yüzdelik cinsten (Örn: %0.0100)
-                
                 if quote_vol is not None and quote_vol > 0:
                     usd_tickers.append({
                         'symbol': symbol, 
                         'volume': quote_vol, 
                         'price': ticker.get('last') or ticker.get('close') or 0.0, 
-                        'change': ticker.get('percentage') or 0.0,
-                        'funding': funding_rate
+                        'change': ticker.get('percentage') or 0.0
                     })
         
         if len(usd_tickers) == 0:
-            return [{'symbol': "BTC/USDT:USDT", 'display': "BTC/USDT ($64,222.00 | +0.00% | FR: +0.0100%)", 'funding': 0.01}]
+            return [
+                {'symbol': "BTC/USDT:USDT", 'display': "BTC/USDT ($64,222.00 | +0.00%)"},
+                {'symbol': "ETH/USDT:USDT", 'display': "ETH/USDT ($3,500.00 | +0.00%)"}
+            ]
             
-        # Hacme göre sırala
         usd_tickers.sort(key=lambda x: x['volume'], reverse=True)
-        
         top_50_data = []
         for item in usd_tickers[:50]:
-            clean_sym = item['symbol'].split(":")[0]  # BTC/USDT formatı
-            display_name = f"{clean_sym} (${item['price']:,.2f} | {item['change']:+.2f}% | FR: {item['funding']:+.4f}%)"
+            clean_sym = item['symbol'].split(":")[0]
+            display_name = f"{clean_sym} (${item['price']:,.2f} | {item['change']:+.2f}%)"
             top_50_data.append({
                 'symbol': item['symbol'],
-                'display': display_name,
-                'funding': item['funding']
+                'display': display_name
             })
         return top_50_data
     except Exception as e:
-        return [{'symbol': "BTC/USDT:USDT", 'display': "BTC/USDT ($64,222.00 | +0.00% | FR: +0.0100%)", 'funding': 0.01}]
-# ==========================================================================================
+        return [
+            {'symbol': "BTC/USDT:USDT", 'display': "BTC/USDT ($64,222.00 | +0.00%)"},
+            {'symbol': "ETH/USDT:USDT", 'display': "ETH/USDT ($3,500.00 | +0.00%)"}
+        ]
 
-# Canlı Fiyatlı, Yüzdelikli ve Fonlama Oranlı 50 coini çekiyoruz
+# En yüksek hacimli 50 vadeli coini çekiyoruz
 top_50_data = get_top_50_volume_coins()
 display_options = [item['display'] for item in top_50_data]
 
@@ -81,15 +77,6 @@ st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
 # COİN SEÇİM KUTUSU
 selected_display = st.sidebar.selectbox("🔥 Vadeli Coin Seçin (Hacim Sıralı 50)", display_options)
 selected_symbol = [item['symbol'] for item in top_50_data if item['display'] == selected_display][0]
-
-# EN YÜKSEK FONLAMA ORANINA SAHİP 5 COİN (YENİ EKLEME)
-st.sidebar.markdown("---")
-st.sidebar.subheader("💸 En Ekstrem Fonlama Oranları (Top 5)")
-# En yüksek mutlak fonlama oranına sahip olanları sıralıyoruz (Hem çok artı hem çok eksi olanları bulmak için)
-top_funding_coins = sorted(top_50_data, key=lambda x: abs(x['funding']), reverse=True)[:5]
-for coin in top_funding_coins:
-    clean_name = coin['symbol'].split(":")[0]
-    st.sidebar.write(f"**{clean_name}:** `{coin['funding']:+.4f}%`")
 
 # Seçilen coinin durum değişkenleri (Her coin için bağımsız session_state saklanır)
 state_prefix = f"{selected_symbol}_"
@@ -116,7 +103,7 @@ except:
     layer_sizes = [0.0001, 0.0002, 0.0012]
 
 target_profit_ratio = 0.01
-stop_loss_ratio = 0.02
+stop_loss_ratio = 0.01  # Kural: %1.0 Stop-Loss (Son alımın %1 aşağısı)
 
 def send_telegram_msg(message):
     url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
@@ -127,7 +114,6 @@ def send_telegram_msg(message):
         pass
 
 # TELEGRAM BAĞLANTI TESTİ BUTONU
-st.sidebar.markdown("---")
 if st.sidebar.button("🔔 Telegram Bağlantısını Test Et"):
     send_telegram_msg(f"👋 *Bağlantı Testi:* Web siteniz üzerinden gönderilen test mesajı başarılı!")
     st.sidebar.success("Test mesajı gönderildi!")
@@ -168,47 +154,53 @@ while True:
         trend_4h = "YUKARI (BOĞA)" if latest_4h_close > latest_4h_ema else "AŞAĞI (AYI)"
         warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
 
-        # 2. Canlı 15m/30m/2h Verilerini Al (Limit 600)
-        raw_candles = exchange.fetch_ohlcv(selected_symbol, "15m", limit=600)
+        # 2. Canlı 5m/1h/4h Verilerini Al (5m master veri limitini 1000 yapıyoruz ki 4h'lik 20 sapma hesaplanabilsin)
+        raw_candles = exchange.fetch_ohlcv(selected_symbol, "5m", limit=1000)
         df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
-        df = calculate_nw_bands(df, 2.0, "_15m")
+        
+        # Kademe 1: 5m Grafik (Birebir 3.0 Std)
+        df = calculate_nw_bands(df, 3.0, "_5m")
 
-        df_30m = df.resample("30min", on="Zaman").last().ffill().reset_index()
-        df_30m = calculate_nw_bands(df_30m, 2.0, "_30m")
-        df = pd.merge_asof(df.sort_values("Zaman"), df_30m[["Zaman", "NW_Ust_30m", "NW_Alt_30m"]].sort_values("Zaman"), on="Zaman", direction="backward")
+        # Kademe 2: 1h Grafik (Birebir 3.0 Std) (Resample '60min' ile)
+        df_1h = df.resample("60min", on="Zaman").last().ffill().reset_index()
+        df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
+        df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h"]].sort_values("Zaman"), on="Zaman", direction="backward")
 
-        df_2h = df.resample("2h", on="Zaman").last().ffill().reset_index()
-        df_2h = calculate_nw_bands(df_2h, 2.5, "_2h")
-        df = pd.merge_asof(df.sort_values("Zaman"), df_2h[["Zaman", "NW_Ust_2h", "NW_Alt_2h"]].sort_values("Zaman"), on="Zaman", direction="backward")
+        # Kademe 3: 4h Grafik (Birebir 3.0 Std) (Resample '240min' ile)
+        df_4h_res = df.resample("240min", on="Zaman").last().ffill().reset_index()
+        df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
+        df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h"]].sort_values("Zaman"), on="Zaman", direction="backward")
 
         latest_row = df.iloc[-1]
         current_price = latest_row["Kapanis"]
-        nw_alt_15m = latest_row["NW_Alt_15m"]
-        nw_alt_30m = latest_row["NW_Alt_30m"]
-        nw_alt_2h = latest_row["NW_Alt_2h"]
-        nw_ust_15m = latest_row["NW_Ust_15m"]
-        nw_ust_30m = latest_row["NW_Ust_30m"]
-        nw_ust_2h = latest_row["NW_Ust_2h"]
+        nw_alt_5m = latest_row["NW_Alt_5m"]
+        nw_alt_1h = latest_row["NW_Alt_1h"]
+        nw_alt_4h = latest_row["NW_Alt_4h"]
+        nw_ust_5m = latest_row["NW_Ust_5m"]
+        nw_ust_1h = latest_row["NW_Ust_1h"]
+        nw_ust_4h = latest_row["NW_Ust_4h"]
 
         # =================== LONG POZİSYON ÇIKIŞLARI ===================
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-            l_stop = st.session_state[f"{state_prefix}l_avg_price"] * (1 - stop_loss_ratio)
             l_tp = st.session_state[f"{state_prefix}l_avg_price"] * (1 + target_profit_ratio)
-
-            if st.session_state[f"{state_prefix}l_status"][2] and current_price <= l_stop:
+            
+            # Kural: Stop-loss sadece 3. kademe alındıysa aktifleşir ve son alım fiyatının (NW_Alt_4h) %1 aşağısıdır
+            if st.session_state[f"{state_prefix}l_status"][2]:
+                l_stop = nw_alt_4h * (1 - stop_loss_ratio)
+                if current_price <= l_stop:
+                    st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
+                    msg = f"🔴 *LONG ORTAK STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f} (Son Alımın %1 Altı)"
+                    send_telegram_msg(msg)
+                    st.session_state[f"{state_prefix}log_history"].append(msg)
+                    st.session_state[f"{state_prefix}l_crypto"] = 0.0
+                    st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
+                    st.session_state[f"{state_prefix}l_avg_price"] = 0.0
+                    st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                    
+            if current_price >= l_tp and sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
-                send_telegram_msg(msg)
-                st.session_state[f"{state_prefix}log_history"].append(msg)
-                st.session_state[f"{state_prefix}l_crypto"] = 0.0
-                st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
-                st.session_state[f"{state_prefix}l_avg_price"] = 0.0
-                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
-
-            elif current_price >= l_tp:
-                st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
+                msg = f"🟢 *LONG ORTAK KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"] = 0.0
@@ -218,24 +210,26 @@ while True:
 
         # =================== SHORT POZİSYON ÇIKIŞLARI ===================
         if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-            s_stop = st.session_state[f"{state_prefix}s_avg_price"] * (1 + stop_loss_ratio)
             s_tp = st.session_state[f"{state_prefix}s_avg_price"] * (1 - target_profit_ratio)
 
-            if st.session_state[f"{state_prefix}s_status"][2] and current_price >= s_stop:
-                pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
-                st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
-                msg = f"🔴 *SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
-                send_telegram_msg(msg)
-                st.session_state[f"{state_prefix}log_history"].append(msg)
-                st.session_state[f"{state_prefix}s_crypto"] = 0.0
-                st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
-                st.session_state[f"{state_prefix}s_avg_price"] = 0.0
-                st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+            # Kural: Stop-loss sadece 3. kademe alındıysa aktifleşir ve son alım fiyatının (NW_Ust_4h) %1 yukarısıdır
+            if st.session_state[f"{state_prefix}s_status"][2]:
+                s_stop = nw_ust_4h * (1 + stop_loss_ratio)
+                if current_price >= s_stop:
+                    pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
+                    st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
+                    msg = f"🔴 *SHORT ORTAK STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f} (Son Alımın %1 Üstü)"
+                    send_telegram_msg(msg)
+                    st.session_state[f"{state_prefix}log_history"].append(msg)
+                    st.session_state[f"{state_prefix}s_crypto"] = 0.0
+                    st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
+                    st.session_state[f"{state_prefix}s_avg_price"] = 0.0
+                    st.session_state[f"{state_prefix}s_status"] = [False, False, False]
 
-            elif current_price <= s_tp:
+            if current_price <= s_tp and sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                 pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
-                msg = f"🟢 *SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
+                msg = f"🟢 *SHORT ORTAK KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}s_crypto"] = 0.0
@@ -244,7 +238,7 @@ while True:
                 st.session_state[f"{state_prefix}s_status"] = [False, False, False]
 
         # =================== LONG GİRİŞLERİ ===================
-        if current_price <= nw_alt_15m and not st.session_state[f"{state_prefix}l_status"][0]:
+        if current_price <= nw_alt_5m and not st.session_state[f"{state_prefix}l_status"][0]:
             buy_amt = layer_sizes[0]
             st.session_state[f"{state_prefix}balance_usd"] -= buy_amt * current_price
             st.session_state[f"{state_prefix}l_crypto"] += buy_amt
@@ -255,7 +249,7 @@ while True:
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
 
-        if current_price <= nw_alt_30m and not st.session_state[f"{state_prefix}l_status"][1]:
+        if current_price <= nw_alt_1h and not st.session_state[f"{state_prefix}l_status"][1]:
             buy_amt = layer_sizes[1]
             st.session_state[f"{state_prefix}balance_usd"] -= buy_amt * current_price
             st.session_state[f"{state_prefix}l_crypto"] += buy_amt
@@ -266,7 +260,7 @@ while True:
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
 
-        if current_price <= nw_alt_2h and not st.session_state[f"{state_prefix}l_status"][2]:
+        if current_price <= nw_alt_4h and not st.session_state[f"{state_prefix}l_status"][2]:
             buy_amt = layer_sizes[2]
             st.session_state[f"{state_prefix}balance_usd"] -= buy_amt * current_price
             st.session_state[f"{state_prefix}l_crypto"] += buy_amt
@@ -278,7 +272,7 @@ while True:
             st.session_state[f"{state_prefix}log_history"].append(msg)
 
         # =================== SHORT GİRİŞLERİ ===================
-        if current_price >= nw_ust_15m and not st.session_state[f"{state_prefix}s_status"][0]:
+        if current_price >= nw_ust_5m and not st.session_state[f"{state_prefix}s_status"][0]:
             sell_amt = layer_sizes[0]
             st.session_state[f"{state_prefix}balance_usd"] -= sell_amt * current_price
             st.session_state[f"{state_prefix}s_crypto"] += sell_amt
@@ -289,7 +283,7 @@ while True:
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
 
-        if current_price >= nw_ust_30m and not st.session_state[f"{state_prefix}s_status"][1]:
+        if current_price >= nw_ust_1h and not st.session_state[f"{state_prefix}s_status"][1]:
             sell_amt = layer_sizes[1]
             st.session_state[f"{state_prefix}balance_usd"] -= sell_amt * current_price
             st.session_state[f"{state_prefix}s_crypto"] += sell_amt
@@ -300,7 +294,7 @@ while True:
             send_telegram_msg(msg)
             st.session_state[f"{state_prefix}log_history"].append(msg)
 
-        if current_price >= nw_ust_2h and not st.session_state[f"{state_prefix}s_status"][2]:
+        if current_price >= nw_ust_4h and not st.session_state[f"{state_prefix}s_status"][2]:
             sell_amt = layer_sizes[2]
             st.session_state[f"{state_prefix}balance_usd"] -= sell_amt * current_price
             st.session_state[f"{state_prefix}s_crypto"] += sell_amt
@@ -314,7 +308,7 @@ while True:
         # =================== EKRAN GÜNCELLEMELERİ (WEB UI) ===================
         with title_placeholder.container():
             st.title(f"📊 {selected_symbol.split(':')[0]} Vadeli DCA Canlı Takip Paneli")
-            st.write(f"Binance Futures Canlı Fiyatı: **{current_price:.2f} USDT**")
+            st.write(f"Gate.io Futures Canlı Fiyatı: **{current_price:.2f} USDT**")
 
         with trend_placeholder.container():
             col_t1, col_t2 = st.columns(2)
@@ -333,17 +327,17 @@ while True:
             # --- LONG GRID KARTI ---
             with col_l:
                 st.info("📈 LONG (Boğa) KADEMELERİ")
-                k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f} USDT)" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_15m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
-                k2_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][1] else f"⏳ Bekliyor ({nw_alt_30m:.2f} | {layer_sizes[1]:.4f} {selected_symbol.split('/')[0]})"
-                k3_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_2h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
+                k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f} USDT)" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_5m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
+                k2_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][1] else f"⏳ Bekliyor ({nw_alt_1h:.2f} | {layer_sizes[1]:.4f} {selected_symbol.split('/')[0]})"
+                k3_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_4h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
                 
-                st.write(f"**Kademe 1 (15m):** {k1_status}")
-                st.write(f"**Kademe 2 (30m):** {k2_status}")
-                st.write(f"**Kademe 3 (2h):** {k3_status}")
+                st.write(f"**Kademe 1 (5m):** {k1_status}")
+                st.write(f"**Kademe 2 (1h):** {k2_status}")
+                st.write(f"**Kademe 3 (4h):** {k3_status}")
                 
                 if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                     l_tp = st.session_state[f"{state_prefix}l_avg_price"] * 1.01
-                    l_sl = st.session_state[f"{state_prefix}l_avg_price"] * 0.98 if st.session_state[f"{state_prefix}l_status"][2] else "PASİF (3. Kademeden Sonra)"
+                    l_sl = nw_alt_4h * 0.99 if st.session_state[f"{state_prefix}l_status"][2] else "PASİF (3. Kademeden Sonra)"
                     st.write(f"**Ortalama Giriş Fiyatı:** {st.session_state[f'{state_prefix}l_avg_price']:.2f} USDT")
                     st.write(f"🟢 **Kar-Al Hedefi (%1):** {l_tp:.2f} USDT")
                     st.write(f"🔴 **Stop-Loss (%2):** {f'{l_sl:.2f} USDT' if isinstance(l_sl, float) else l_sl}")
@@ -353,17 +347,17 @@ while True:
             # --- SHORT GRID KARTI ---
             with col_s:
                 st.error("📉 SHORT (Ayı) KADEMELERİ")
-                s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_avg_price']:.2f} USDT)" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_15m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
-                s_k2_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][1] else f"⏳ Bekliyor ({nw_ust_30m:.2f} | {layer_sizes[1]:.4f} {selected_symbol.split('/')[0]})"
-                s_k3_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_2h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
+                s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_avg_price']:.2f} USDT)" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_5m:.2f} | {layer_sizes[0]:.4f} {selected_symbol.split('/')[0]})"
+                s_k2_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][1] else f"⏳ Bekliyor ({nw_ust_1h:.2f} | {layer_sizes[1]:.4f} {selected_symbol.split('/')[0]})"
+                s_k3_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_4h:.2f} | {layer_sizes[2]:.4f} {selected_symbol.split('/')[0]})"
                 
-                st.write(f"**Kademe 1 (15m):** {s_k1_status}")
-                st.write(f"**Kademe 2 (30m):** {s_k2_status}")
-                st.write(f"**Kademe 3 (2h):** {s_k3_status}")
+                st.write(f"**Kademe 1 (5m):** {s_k1_status}")
+                st.write(f"**Kademe 2 (1h):** {s_k2_status}")
+                st.write(f"**Kademe 3 (4h):** {s_k3_status}")
                 
                 if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                     s_tp = st.session_state[f"{state_prefix}s_avg_price"] * 0.99
-                    s_sl = st.session_state[f"{state_prefix}s_avg_price"] * 1.02 if st.session_state[f"{state_prefix}s_status"][2] else "PASİF (3. Kademeden Sonra)"
+                    s_sl = nw_ust_4h * 1.02 if st.session_state[f"{state_prefix}s_status"][2] else "PASİF (3. Kademeden Sonra)"
                     st.write(f"**Ortalama Giriş Fiyatı:** {st.session_state[f'{state_prefix}s_avg_price']:.2f} USDT")
                     st.write(f"🟢 **Kar-Al Hedefi (%1):** {s_tp:.2f} USDT")
                     st.write(f"🔴 **Stop-Loss (%2):** {f'{s_sl:.2f} USDT' if isinstance(s_sl, float) else s_sl}")
@@ -376,8 +370,8 @@ while True:
             
             fig, ax = plt.subplots(figsize=(15, 5))
             ax.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat", color="royalblue", linewidth=2)
-            ax.plot(df_subset["Zaman"], df_subset["NW_Alt_15m"], label="Long Al (Alt Band)", color="limegreen", linestyle="--")
-            ax.plot(df_subset["Zaman"], df_subset["NW_Ust_15m"], label="Short Aç (Üst Band)", color="crimson", linestyle="--")
+            ax.plot(df_subset["Zaman"], df_subset["NW_Alt_5m"], label="Long Al (Alt Band)", color="limegreen", linestyle="--")
+            ax.plot(df_subset["Zaman"], df_subset["NW_Ust_5m"], label="Short Aç (Üst Band)", color="crimson", linestyle="--")
             
             if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                 ax.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.7)
@@ -400,4 +394,4 @@ while True:
     except Exception as e:
         st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
         
-    time.sleep(10)  # BEKLEME SÜRESİ 30 SANİYEDEN 10 SANİYEYE DÜŞÜRÜLDÜ (ULTRA HIZLI)
+    time.sleep(10) # 10 Saniyelik Ultra Hızlı Kontrol Döngüsü
