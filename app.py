@@ -32,8 +32,33 @@ if not check_password(): st.stop()
 
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
-# Flicker-Free CSS (Kararma Önleyici)
-st.markdown("<style>div[data-testid='stAppViewBlockContainer']{opacity:1.0!important;transition:none!important;}div[data-testid='stStatusWidget']{display:none!important;visibility:hidden!important;}</style>", unsafe_allow_html=True)
+# ================= GELİŞMİŞ KARARMA VE DALGALANMA ÖNLEYİCİ (FLICKER-FREE CSS) =================
+st.markdown(
+    """
+    <style>
+    /* Ana ekranın ve tüm dikey blokların güncellenirken şeffaflaşmasını tamamen engeller */
+    div[data-testid="stAppViewBlockContainer"], 
+    div[data-testid="stVerticalBlock"], 
+    [data-testid="stMain"],
+    .stApp {
+        opacity: 1.0 !important;
+        filter: none !important;
+        transition: none !important;
+    }
+    /* Güncellenen grafiklerin veya markdown alanlarının sönükleşmesini önler */
+    .element-container, .stPlotlyChart, .stMarkdown {
+        opacity: 1.0 !important;
+        transition: none !important;
+    }
+    /* Sağ üstteki yükleniyor/çalışıyor simgelerini tamamen gizler */
+    div[data-testid="stStatusWidget"], [data-testid="stStatusWidget"] {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    </style>
+    """, 
+    unsafe_allow_html=True
+)
 
 # Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz
 plt.style.use('dark_background')
