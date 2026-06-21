@@ -15,7 +15,7 @@ plt.style.use('dark_background')
 
 # ================= ENTEGRE EDİLMİŞ TELEGRAM AYARLARINIZ =================
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
-telegram_chat_id = "665969213"
+telegram_chat_id = "@kyounkripto"
 # =========================================================================
 
 # GATE.IO FUTURES BAĞLANTISI (Vadeli Modu Aktif)
