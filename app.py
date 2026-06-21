@@ -4,7 +4,8 @@ import pandas as pd
 import numpy as np
 import time
 import requests
-import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from supabase import create_client, Client
 
 # ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
@@ -577,7 +578,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
 
     main_container = st.empty()
 
-    # Orijinal kıpırdamasız ve kararmasız while True döngüsü geri yüklendi (st.rerun silindi)
     while True:
         try:
             # 1. ANLIK BORSA TICKER VERİSİ SORGULAMA
@@ -674,7 +674,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 st.session_state[f"{state_prefix}locked_prices"] = None
                 nw_alt_5m, nw_alt_1h, nw_alt_4h = dyn_alt_5m, dyn_alt_1h, dyn_alt_4h
                 nw_ust_5m, nw_ust_1h, nw_ust_4h = dyn_ust_5m, dyn_ust_1h, dyn_ust_4h
-
+            
             rsi_1m_val = df_1m.iloc[-1]["RSI"]
             rsi_5m_val = df_5m.iloc[-1]["RSI"]
             rsi_15m_val = df_15m.iloc[-1]["RSI"]
@@ -684,93 +684,111 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
 
             bull_div_5m, bear_div_5m = detect_rsi_divergence(df_5m["Kapanis"].values, df_5m["RSI"].values)
             bull_div_1h, bear_div_1h = detect_rsi_divergence(df_1h["Kapanis"].values, df_1h["RSI"].values)
-            bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h["Kapanis"].values, df_4h["RSI"].values)
+            bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h_res["Kapanis"].values, df_4h_res["RSI_14_4h"].values) if "RSI_14_4h" in df_4h_res else (False, False)
 
             # LONG ÇIKIŞLARI
             if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                 l_tp = st.session_state[f"{state_prefix}l_avg_price"] * (1 + target_profit_ratio)
-                if st.session_state[f"{state_prefix}l_status"][2] and current_price <= (nw_alt_4h * (1 - stop_loss_ratio)):
-                    st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                    msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
-                    send_telegram_msg(msg)
-                    st.session_state[f"{state_prefix}log_history"].append(msg)
-                    st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"], st.session_state[f"{state_prefix}l_status"] = 0.0, 0.0, 0.0, [False, False, False]
-                    save_state_to_db()
+                
+                if st.session_state[f"{state_prefix}l_status"][2]:
+                    l_stop = nw_alt_4h * (1 - stop_loss_ratio)
+                    if current_price <= l_stop:
+                        st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
+                        msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
+                        send_telegram_msg(msg)
+                        st.session_state[f"{state_prefix}log_history"].append(msg)
+                        st.session_state[f"{state_prefix}l_crypto"] = 0.0
+                        st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
+                        st.session_state[f"{state_prefix}l_avg_price"] = 0.0
+                        st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                        save_state_to_db()
+
                 elif current_price >= l_tp:
                     st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
                     msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
                     send_telegram_msg(msg)
                     st.session_state[f"{state_prefix}log_history"].append(msg)
-                    st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"], st.session_state[f"{state_prefix}l_status"] = 0.0, 0.0, 0.0, [False, False, False]
+                    st.session_state[f"{state_prefix}l_crypto"] = 0.0
+                    st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
+                    st.session_state[f"{state_prefix}l_avg_price"] = 0.0
+                    st.session_state[f"{state_prefix}l_status"] = [False, False, False]
                     save_state_to_db()
 
-        # SHORT ÇIKIŞLARI
-        if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-            s_stop = st.session_state[f"{state_prefix}s_avg_price"] * (1 + stop_loss_ratio)
-            s_tp = st.session_state[f"{state_prefix}s_avg_price"] * (1 - target_profit_ratio)
-            if st.session_state[f"{state_prefix}s_status"][2] and current_price >= s_stop:
-                pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
-                st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
-                msg = f"🔴 *SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
-                send_telegram_msg(msg)
-                st.session_state[f"{state_prefix}log_history"].append(msg)
-                st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"], st.session_state[f"{state_prefix}s_status"] = 0.0, 0.0, 0.0, [False, False, False]
-                save_state_to_db()
-            elif current_price <= s_tp:
-                pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
-                st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
-                msg = f"🟢 *SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
-                send_telegram_msg(msg)
-                st.session_state[f"{state_prefix}log_history"].append(msg)
-                st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"], st.session_state[f"{state_prefix}s_status"] = 0.0, 0.0, 0.0, [False, False, False]
-                save_state_to_db()
+            # SHORT POZİSYON ÇIKIŞLARI
+            if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
+                s_stop = st.session_state[f"{state_prefix}s_avg_price"] * (1 + stop_loss_ratio)
+                s_tp = st.session_state[f"{state_prefix}s_avg_price"] * (1 - target_profit_ratio)
 
-        # LONG GİRİŞLERİ
-        for idx, th, val in zip([0, 1, 2], [nw_alt_5m, nw_alt_1h, nw_alt_4h], layer_sizes):
-            if current_price <= th and (idx == 0 or st.session_state[f"{state_prefix}l_status"][idx-1]) and not st.session_state[f"{state_prefix}l_status"][idx]:
-                st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
-                st.session_state[f"{state_prefix}l_crypto"] += val
-                st.session_state[f"{state_prefix}l_usd_spent"] += val * current_price
-                st.session_state[f"{state_prefix}l_status"][idx] = True
-                st.session_state[f"{state_prefix}l_avg_price"] = st.session_state[f"{state_prefix}l_usd_spent"] / st.session_state[f"{state_prefix}l_crypto"]
-                msg = f"📈 *LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
-                send_telegram_msg(msg)
-                st.session_state[f"{state_prefix}log_history"].append(msg)
-                save_state_to_db()
+                if st.session_state[f"{state_prefix}s_status"][2] and current_price >= s_stop:
+                    pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
+                    st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
+                    msg = f"🔴 *SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
+                    send_telegram_msg(msg)
+                    st.session_state[f"{state_prefix}log_history"].append(msg)
+                    st.session_state[f"{state_prefix}s_crypto"] = 0.0
+                    st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
+                    st.session_state[f"{state_prefix}s_avg_price"] = 0.0
+                    st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                    save_state_to_db()
 
-        # SHORT GİRİŞLERİ
-        for idx, th, val in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes):
-            if current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]:
-                st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
-                st.session_state[f"{state_prefix}s_crypto"] += val
-                st.session_state[f"{state_prefix}s_usd_spent"] += val * current_price
-                st.session_state[f"{state_prefix}s_status"][idx] = True
-                st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
-                msg = f"📉 *SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
-                send_telegram_msg(msg)
-                st.session_state[f"{state_prefix}log_history"].append(msg)
-                save_state_to_db()
+                elif current_price <= s_tp:
+                    pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
+                    st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
+                    msg = f"🟢 *SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
+                    send_telegram_msg(msg)
+                    st.session_state[f"{state_prefix}log_history"].append(msg)
+                    st.session_state[f"{state_prefix}s_crypto"] = 0.0
+                    st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
+                    st.session_state[f"{state_prefix}s_avg_price"] = 0.0
+                    st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                    save_state_to_db()
 
-        # ARAYÜZÜ DOĞRUDAN ÇİZİYORUZ (HATA GİDERİCİ: Plotly grafiklerinden key çakışması yaratan parametreler silindi)
-        with main_container.container():
-            col_left, col_right = st.columns([1.6, 1])
-            
-            with col_left:
-                st.subheader("📈 Canlı Fiyat ve Nadaraya-Watson Zarf Grafikleri")
-                tab_1m, tab_5m, tab_15m, tab_1h, tab_4h, tab_1d = st.tabs(["⏱️ 1m", "⏱️ 5m", "⏱️ 15m", "⏱️ 1h", "⏱️ 4h", "🌎 1d"])
+            # LONG GİRİŞLERİ
+            for idx, th, val in zip([0, 1, 2], [nw_alt_5m, nw_alt_1h, nw_alt_4h], layer_sizes):
+                if current_price <= th and (idx == 0 or st.session_state[f"{state_prefix}l_status"][idx-1]) and not st.session_state[f"{state_prefix}l_status"][idx]:
+                    st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
+                    st.session_state[f"{state_prefix}l_crypto"] += val
+                    st.session_state[f"{state_prefix}l_usd_spent"] += val * current_price
+                    st.session_state[f"{state_prefix}l_status"][idx] = True
+                    st.session_state[f"{state_prefix}l_avg_price"] = st.session_state[f"{state_prefix}l_usd_spent"] / st.session_state[f"{state_prefix}l_crypto"]
+                    msg = f"📈 *LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
+                    send_telegram_msg(msg)
+                    st.session_state[f"{state_prefix}log_history"].append(msg)
+                    save_state_to_db()
+
+            # SHORT GİRİŞLERİ
+            for idx, th, val in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes):
+                if current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]:
+                    st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
+                    st.session_state[f"{state_prefix}s_crypto"] += val
+                    st.session_state[f"{state_prefix}s_usd_spent"] += val * current_price
+                    st.session_state[f"{state_prefix}s_status"][idx] = True
+                    st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
+                    msg = f"📈 *SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
+                    send_telegram_msg(msg)
+                    st.session_state[f"{state_prefix}log_history"].append(msg)
+                    save_state_to_db()
+
+            # ARAYÜZÜ DOĞRUDAN ÇİZİYORUZ
+            with main_container.container():
+                col_left, col_right = st.columns([1.6, 1])
                 
-                with tab_1m:
-                    st.plotly_chart(draw_plotly_chart(df_1m.tail(100), "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
-                with tab_5m:
-                    st.plotly_chart(draw_plotly_chart(df_5m.tail(100), "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
-                with tab_15m:
-                    st.plotly_chart(draw_plotly_chart(df_15m.tail(100), "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
-                with tab_1h:
-                    st.plotly_chart(draw_plotly_chart(df_1h.tail(100), "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
-                with tab_4h:
-                    st.plotly_chart(draw_plotly_chart(df_4h.tail(100), "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True)
-                with tab_1d:
-                    st.plotly_chart(draw_plotly_chart(df_1d.tail(30), "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True)
+                with col_left:
+                    st.subheader("📈 Canlı Fiyat ve Nadaraya-Watson Zarf Grafikleri")
+                    tab_1m, tab_5m, tab_15m, tab_1h, tab_4h, tab_1d = st.tabs(["⏱️ 1m", "⏱️ 5m", "⏱️ 15m", "⏱️ 1h", "⏱️ 4h", "🌎 1d"])
+                    
+                    with tab_1m:
+                        st.plotly_chart(draw_plotly_chart(df_1m.tail(100), "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_1m_uq")
+                    with tab_5m:
+                        st.plotly_chart(draw_plotly_chart(df_5m.tail(100), "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_5m_uq")
+                    with tab_15m:
+                        st.plotly_chart(draw_plotly_chart(df_15m.tail(100), "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_15m_uq")
+                    with tab_1h:
+                        st.plotly_chart(draw_plotly_chart(df_1h.tail(100), "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_1h_uq")
+                    with tab_4h:
+                        st.plotly_chart(draw_plotly_chart(df_4h.tail(100), "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key="live_plotly_4h_uq")
+                    with tab_1d:
+                        st.plotly_chart(draw_plotly_chart(df_1d.tail(30), "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key="live_plotly_1d_uq")
 
                 st.markdown("---")
                 st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
@@ -837,7 +855,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                         st.success(f"🟢 **KAR-AL (%1):** `{st.session_state[f'{state_prefix}s_avg_price'] * 0.99:.2f}`")
 
-            # Günlük Piyasa Liderleri (HATA GİDERİCİ: main_container kapsamına alınarak mükerrer birikme kesin olarak çözüldü)
+            # Günlük Piyasa Liderleri (Yığılmayı önlemek için main_container içerisine alındı)
             st.markdown("---")
             st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
             col_g, col_lo = st.columns(2)
@@ -853,12 +871,28 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 st.write("📜 **Son Sinyaller (Log)**")
                 for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]): st.write(log)
 
-        except Exception as e:
-            st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
-            time.sleep(5)  # Hata durumunda CPU yorulmasını önlemek için bekleme eklendi
-            
-        # ================= GERİ SAYIM SAYACI =================
-        for remaining in range(10, 0, -1):
-            countdown_placeholder.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
-            time.sleep(1)
-        countdown_placeholder.write("🔄 Taranıyor...")
+            # SIFIRLAMA BUTONU
+            st.markdown("---")
+            if st.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="reset_all_positions_button"):
+                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                st.session_state[f"{state_prefix}l_crypto"] = 0.0
+                st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
+                st.session_state[f"{state_prefix}l_avg_price"] = 0.0
+                st.session_state[f"{state_prefix}s_crypto"] = 0.0
+                st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
+                st.session_state[f"{state_prefix}s_avg_price"] = 0.0
+                st.session_state[f"{state_prefix}balance_usd"] = 100.0
+                st.session_state[f"{state_prefix}locked_prices"] = None
+                save_state_to_db()
+                st.rerun()
+
+    except Exception as e:
+        st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
+        time.sleep(5)  # Hata durumunda CPU yorulmasını önlemek için bekleme eklendi
+        
+    # ================= GERİ SAYIM SAYACI =================
+    for remaining in range(10, 0, -1):
+        countdown_placeholder.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
+        time.sleep(1)
+    countdown_placeholder.write("🔄 Taranıyor...")
