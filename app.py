@@ -92,11 +92,13 @@ def get_market_movers_and_funding():
         funding.sort(key=lambda x: abs(x['rate']), reverse=True)
         df_m = pd.DataFrame(movers)
         df_g = df_m.sort_values(by='Değişim (%)', ascending=False).head(5).copy()
+        df_g['Değişim (%)'] = df_g['Değişim (%)'].apply(lambda x: f"{x:+.2f}%")
+        df_g['Fonlama Oranı'] = df_g['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
+        df_g['Fiyat (USDT)'] = df_g['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
         df_l = df_m.sort_values(by='Değişim (%)', ascending=True).head(5).copy()
-        for df in [df_g, df_l]:
-            df['Değişim (%)'] = df['Değişim (%)'].apply(lambda x: f"{x:+.2f}%")
-            df['Fonlama Oranı'] = df['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
-            df['Fiyat (USDT)'] = df['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
+        df_l['Değişim (%)'] = df_l['Değişim (%)'].apply(lambda x: f"{x:.2f}%")
+        df_l['Fonlama Oranı'] = df_l['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
+        df_l['Fiyat (USDT)'] = df_l['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
         return funding[:5], df_g, df_l
     except:
         return [], pd.DataFrame(), pd.DataFrame()
@@ -249,12 +251,20 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                 df_bt = calculate_nw_bands(df_bt, bt_std * 0.85, "_K2")
                 df_bt = calculate_nw_bands(df_bt, bt_std, "_K3")
                 
-                initial_balance, balance = 1000.0, 1000.0
-                l_status, l_crypto, l_usd_spent, l_avg_price = [False, False, False], 0.0, 0.0, 0.0
-                equity_curve, trade_logs = [], []
+                initial_balance = 1000.0
+                balance = initial_balance
+                
+                l_status = [False, False, False]
+                l_crypto = 0.0
+                l_usd_spent = 0.0
+                l_avg_price = 0.0
+                
+                equity_curve = []
+                trade_logs = []
                 
                 for i, row in df_bt.iterrows():
-                    close, t_time = row["Kapanis"], row["Zaman"]
+                    close = row["Kapanis"]
+                    t_time = row["Zaman"]
                     
                     if sum(l_status) > 0:
                         l_tp_target = l_avg_price * (1 + bt_tp)
@@ -504,15 +514,38 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     df_subset = df_1d.tail(30)
                     st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key=f"{state_prefix}chart_1d")
 
-            st.markdown("---")
-            st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
-            col_liq_l, col_liq_s = st.columns(2)
-            with col_liq_l:
-                st.info("🔴 LONG LİKİDASYON HAVUZLARI")
-                if not df_long_liq.empty: st.table(df_long_liq.reset_index(drop=True))
-            with col_liq_s:
-                st.error("🟢 SHORT LİKİDASYON HAVUZLARI")
-                if not df_short_liq.empty: st.table(df_short_liq.reset_index(drop=True))
+                # =================== TASARIMSAL DÜZELTME: DCA KADEMELERİ SOL SÜTUNA (BOŞLUĞA) TAŞINDI ===================
+                # Curved/Ultrawide monitörlerde sol sütunun altında oluşan koca boşluğu doldurmak için DCA Yönetim Kartı buraya yerleştirildi.
+                st.markdown("---")
+                st.write("🎯 **Canlı Sinyal DCA Yönetim Kartı**")
+                col_l, col_s = st.columns(2)
+                with col_l:
+                    st.info("📈 LONG KADEMELERİ")
+                    k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f})" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_5m:.2f})"
+                    k2_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][1] else f"⏳ Bekliyor ({nw_alt_1h:.2f})"
+                    k3_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_4h:.2f})"
+                    st.write(f"**{l1_lbl}:** {k1_status}"); st.write(f"**{l2_lbl}:** {k2_status}"); st.write(f"**{l3_lbl}:** {k3_status}")
+                    if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
+                        st.success(f"🟢 **KAR-AL (%1):** `{st.session_state[f'{state_prefix}l_avg_price'] * 1.01:.2f}`")
+
+                with col_s:
+                    st.error("📉 SHORT KADEMELERİ")
+                    s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_avg_price']:.2f})" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_5m:.2f})"
+                    s_k2_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][1] else f"⏳ Bekliyor ({nw_ust_1h:.2f})"
+                    s_k3_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_4h:.2f})"
+                    st.write(f"**{s1_lbl}:** {s_k1_status}"); st.write(f"**{s2_lbl}:** {s_k2_status}"); st.write(f"**{s3_lbl}:** {s_k3_status}")
+                    if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
+                        st.success(f"🟢 **KAR-AL (%1):** `{st.session_state[f'{state_prefix}s_avg_price'] * 0.99:.2f}`")
+
+                st.markdown("---")
+                st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
+                col_liq_l, col_liq_s = st.columns(2)
+                with col_liq_l:
+                    st.info("🔴 LONG LİKİDASYON HAVUZLARI")
+                    if not df_long_liq.empty: st.table(df_long_liq.reset_index(drop=True))
+                with col_liq_s:
+                    st.error("🟢 SHORT LİKİDASYON HAVUZLARI")
+                    if not df_short_liq.empty: st.table(df_short_liq.reset_index(drop=True))
 
             with col_right:
                 st.subheader(f"📊 {coin_title} Canlı Terminal")
@@ -547,28 +580,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 with col_rsi_c:
                     st.write("**15m (Normal)**"); st.code(f"{rsi_15m_val:.1f}")
                     st.write("**1d (Ana Trend)**"); st.code(f"{rsi_1d_val:.1f}")
-            
-                st.markdown("---")
-                st.write("🎯 **Canlı Sinyal DCA Yönetim Kartı**")
-                col_l, col_s = st.columns(2)
-            
-                with col_l:
-                    st.info("📈 LONG KADEMELERİ")
-                    k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f})" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_5m:.2f})"
-                    k2_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][1] else f"⏳ Bekliyor ({nw_alt_1h:.2f})"
-                    k3_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_4h:.2f})"
-                    st.write(f"**{l1_lbl}:** {k1_status}"); st.write(f"**{l2_lbl}:** {k2_status}"); st.write(f"**{l3_lbl}:** {k3_status}")
-                    if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-                        st.success(f"🟢 **KAR-AL (%1):** `{st.session_state[f'{state_prefix}l_avg_price'] * 1.01:.2f}`")
-
-                with col_s:
-                    st.error("📉 SHORT KADEMELERİ")
-                    s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_avg_price']:.2f})" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_5m:.2f})"
-                    s_k2_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][1] else f"⏳ Bekliyor ({nw_ust_1h:.2f})"
-                    s_k3_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_4h:.2f})"
-                    st.write(f"**{s1_lbl}:** {s_k1_status}"); st.write(f"**{s2_lbl}:** {s_k2_status}"); st.write(f"**{s3_lbl}:** {s_k3_status}")
-                    if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-                        st.success(f"🟢 **KAR-AL (%1):** `{st.session_state[f'{state_prefix}s_avg_price'] * 0.99:.2f}`")
 
             # Günlük Piyasa Liderleri (Yığılmayı önlemek için main_container içerisine alındı)
             st.markdown("---")
