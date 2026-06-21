@@ -267,6 +267,8 @@ st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
 selected_display = st.sidebar.selectbox("🔥 Vadeli Coin Seçin", display_options, key="sidebar_coin_selectbox_global")
 selected_symbol = [item['symbol'] for item in top_50_data if item['display'] == selected_display][0]
 
+# HATA GİDERİCİ: coin_title değişkeni küresel olarak tanımlandı
+coin_title = selected_symbol.split(':')[0]
 state_prefix = f"{selected_symbol}_"
 
 # ================= VERİTABANINDAN DURUMU GERİ YÜKLEME (RESTORE) =================
@@ -516,7 +518,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
         save_state_to_db()
         st.rerun()
 
-    # HATA GİDERİCİ:countdown_placeholder nesnesi doğrudan Canlı DCA Terminal bloğunun içinde oluşturuldu.
+    # Geri sayım sayacı alanı
     st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
     countdown_placeholder = st.sidebar.empty()
 
@@ -841,7 +843,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                             ax3.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
                         if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                             ax3.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
-                        
                         ax3.legend(loc="upper left")
                         ax3.grid(True, color='white', alpha=0.03)
                         plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
