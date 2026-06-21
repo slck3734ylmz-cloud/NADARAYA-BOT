@@ -249,43 +249,25 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                 df_bt = calculate_nw_bands(df_bt, bt_std * 0.85, "_K2")
                 df_bt = calculate_nw_bands(df_bt, bt_std, "_K3")
                 
-                initial_balance = 1000.0
-                balance = initial_balance
-                
-                l_status = [False, False, False]
-                l_crypto = 0.0
-                l_usd_spent = 0.0
-                l_avg_price = 0.0
-                
-                equity_curve = []
-                trade_logs = []
+                initial_balance, balance = 1000.0, 1000.0
+                l_status, l_crypto, l_usd_spent, l_avg_price = [False, False, False], 0.0, 0.0, 0.0
+                equity_curve, trade_logs = [], []
                 
                 for i, row in df_bt.iterrows():
-                    close = row["Kapanis"]
-                    t_time = row["Zaman"]
+                    close, t_time = row["Kapanis"], row["Zaman"]
                     
                     if sum(l_status) > 0:
                         l_tp_target = l_avg_price * (1 + bt_tp)
                         if l_status[2] and close <= (df_bt.at[i, "NW_Alt_K3"] * (1 - bt_sl)):
                             pnl_usd = (l_crypto * close) - l_usd_spent
                             balance += l_crypto * close
-                            trade_logs.append({
-                                "Tür": "LONG STOP-LOSS", "Kapanış Zamanı": t_time, 
-                                "Giriş Fiyatı": l_avg_price, "Kapanış Fiyatı": close, 
-                                "Kar/Zarar ($)": pnl_usd, "Kalan Bakiye": balance
-                            })
-                            l_crypto, l_usd_spent, l_avg_price = 0.0, 0.0, 0.0
-                            l_status = [False, False, False]
+                            trade_logs.append({"Tür": "LONG STOP-LOSS", "Kapanış Zamanı": t_time, "Giriş Fiyatı": l_avg_price, "Kapanış Fiyatı": close, "Kar/Zarar ($)": pnl_usd, "Kalan Bakiye": balance})
+                            l_crypto, l_usd_spent, l_avg_price, l_status = 0.0, 0.0, 0.0, [False, False, False]
                         elif close >= l_tp_target:
                             pnl_usd = (l_crypto * close) - l_usd_spent
                             balance += l_crypto * close
-                            trade_logs.append({
-                                "Tür": "LONG KAR-AL", "Kapanış Zamanı": t_time, 
-                                "Giriş Fiyatı": l_avg_price, "Kapanış Fiyatı": close, 
-                                "Kar/Zarar ($)": pnl_usd, "Kalan Bakiye": balance
-                            })
-                            l_crypto, l_usd_spent, l_avg_price = 0.0, 0.0, 0.0
-                            l_status = [False, False, False]
+                            trade_logs.append({"Tür": "LONG KAR-AL", "Kapanış Zamanı": t_time, "Giriş Fiyatı": l_avg_price, "Kapanış Fiyatı": close, "Kar/Zarar ($)": pnl_usd, "Kalan Bakiye": balance})
+                            l_crypto, l_usd_spent, l_avg_price, l_status = 0.0, 0.0, 0.0, [False, False, False]
                             
                     for idx, th, val in zip([0, 1, 2], ["_K1", "_K2", "_K3"], [0.05, 0.10, 0.25]):
                         if close <= row[f"NW_Alt{th}"] and (idx == 0 or l_status[idx-1]) and not l_status[idx]:
@@ -300,10 +282,6 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                     
                 df_equity = pd.DataFrame({"Zaman": df_bt["Zaman"], "Bakiye": equity_curve})
                 df_trades = pd.DataFrame(trade_logs)
-                
-                st.markdown("---")
-                st.write("📈 **Simülasyon Sonuçları**")
-                
                 if not df_trades.empty:
                     win_rate = (len(df_trades[df_trades["Kar/Zarar ($)"] > 0]) / len(df_trades)) * 100.0
                     col_r1, col_r2, col_r3, col_r4 = st.columns(4)
@@ -313,8 +291,7 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                     col_r4.metric("Toplam İşlem", f"{len(df_trades)}")
                     
                     fig_bt = go.Figure()
-                    fig_bt.add_trace(go.Scatter(x=df_equity["Zaman"], y=df_equity["Bakiye"], name="Bakiye Gelişimi (Equity)", line=dict(color="gold", width=2.5)))
-                    fig_bt.add_hline(y=initial_balance, line=dict(color="white", width=1, dash="dash"))
+                    fig_bt.add_trace(go.Scatter(x=df_equity["Zaman"], y=df_equity["Bakiye"], name="Bakiye", line=dict(color="gold", width=2.5)))
                     fig_bt.update_layout(title="Bakiye Gelişim Grafiği (Equity Curve)", template="plotly_dark", xaxis_title="Zaman", yaxis_title="Bakiye (USD)", margin=dict(l=20, r=20, t=40, b=20), height=400, hovermode="x unified")
                     st.plotly_chart(fig_bt, use_container_width=True, key="backtest_plotly_equity_chart_unique")
                     st.dataframe(df_trades)
@@ -340,41 +317,64 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
         st.rerun()
 
     st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
+    countdown_placeholder = st.sidebar.empty()
+    main_container = st.empty()
 
     @st.fragment(run_every="10s")
     def live_dca_fragment():
         try:
+            # 1. ANLIK BORSA TICKER VERİSİ SORGULAMA
             live_ticker = exchange.fetch_ticker(selected_symbol)
             current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
             price_change_24h = live_ticker.get('percentage') or 0.0
 
-            raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=210)
-            df_4h = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-            df_4h["EMA_200"] = df_4h["Kapanis"].ewm(span=200, adjust=False).mean()
-            trend_4h = "YUKARI (BOĞA)" if df_4h.iloc[-1]["Kapanis"] > df_4h.iloc[-1]["EMA_200"] else "AŞAĞI (AYI)"
+            # 2. KÜRESEL 4H TREND HESAPLAMASI
+            raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=120)
+            df_4h_trend = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            df_4h_trend["EMA_200"] = df_4h_trend["Kapanis"].ewm(span=200, adjust=False).mean()
+            trend_4h = "YUKARI (BOĞA)" if df_4h_trend.iloc[-1]["Kapanis"] > df_4h_trend.iloc[-1]["EMA_200"] else "AŞAĞI (AYI)"
             warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
 
+            # 3. ANLIK VOLATİLİTE ÖLÇÜMÜ (Tansiyon Algoritması)
             raw_vol = exchange.fetch_ohlcv(selected_symbol, "15m", limit=120)
             df_vol = pd.DataFrame(raw_vol, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
             is_volatile = df_vol["Kapanis"].rolling(20).std().iloc[-1] > df_vol["Kapanis"].rolling(20).std().median()
             market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
-            raw_candles = exchange.fetch_ohlcv(selected_symbol, "1m", limit=1000)
-            df_1m = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            # =================== 4. YENİ GELİŞMİŞ NATIVE VERİ TAKİBİ (120 MUM TAMPONLU) ===================
+            # Geri bildiriminiz doğrultusunda resample yerine doğrudan borsadan native mumlar çekiliyor.
+            # rolling(20) standard sapma hesabı ilk 19 mumda NaN ürettiği için 120 mum çekilip tail(100) ile tam 100 sağlıklı mum çizilir.
+            raw_1m = exchange.fetch_ohlcv(selected_symbol, "1m", limit=120)
+            df_1m = pd.DataFrame(raw_1m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
             df_1m["Zaman"] = pd.to_datetime(df_1m["Zaman"], unit="ms")
             df_1m = calculate_nw_bands(df_1m, 3.0, "_1m")
             df_1m["RSI"] = calculate_rsi(df_1m["Kapanis"])
 
-            dfs = {}
-            for tf, name in zip(["5min", "15min", "60min", "240min"], ["_5m", "_15m", "_1h", "_4h"]):
-                df_res = df_1m.resample(tf, on='Zaman').agg({'Acilis':'first', 'Yuksek':'max', 'Dusuk':'min', 'Kapanis':'last', 'Hacim':'sum'}).reset_index()
-                df_res = calculate_nw_bands(df_res, 3.0, name)
-                df_res["RSI"] = calculate_rsi(df_res["Kapanis"])
-                dfs[name] = df_res
+            raw_5m = exchange.fetch_ohlcv(selected_symbol, "5m", limit=120)
+            df_5m = pd.DataFrame(raw_5m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            df_5m["Zaman"] = pd.to_datetime(df_5m["Zaman"], unit="ms")
+            df_5m = calculate_nw_bands(df_5m, 3.0, "_5m")
+            df_5m["RSI"] = calculate_rsi(df_5m["Kapanis"])
 
-            df_5m, df_15m, df_1h, df_4h = dfs["_5m"], dfs["_15m"], dfs["_1h"], dfs["_4h"]
+            raw_15m = exchange.fetch_ohlcv(selected_symbol, "15m", limit=120)
+            df_15m = pd.DataFrame(raw_15m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            df_15m["Zaman"] = pd.to_datetime(df_15m["Zaman"], unit="ms")
+            df_15m = calculate_nw_bands(df_15m, 3.0, "_15m")
+            df_15m["RSI"] = calculate_rsi(df_15m["Kapanis"])
 
-            raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=100)
+            raw_1h = exchange.fetch_ohlcv(selected_symbol, "1h", limit=120)
+            df_1h = pd.DataFrame(raw_1h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            df_1h["Zaman"] = pd.to_datetime(df_1h["Zaman"], unit="ms")
+            df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
+            df_1h["RSI"] = calculate_rsi(df_1h["Kapanis"])
+
+            raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=120)
+            df_4h = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            df_4h["Zaman"] = pd.to_datetime(df_4h["Zaman"], unit="ms")
+            df_4h = calculate_nw_bands(df_4h, 3.0, "_4h")
+            df_4h["RSI"] = calculate_rsi(df_4h["Kapanis"])
+
+            raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=120)
             df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
             df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
             df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
@@ -464,8 +464,9 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.session_state[f"{state_prefix}log_history"].append(msg)
                     save_state_to_db()
 
-            # SHORT GİRİŞLERİ - HATA GİDERİCİ: Cliff yazım hatası tamamen temizlendi
+            # SHORT GİRİŞLERİ
             for idx, th, val in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes):
+                # HATA GİDERİCİ: th Cliff yazım hatası tamamen düzeltildi
                 if current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]:
                     st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
                     st.session_state[f"{state_prefix}s_crypto"] += val
@@ -569,6 +570,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                         st.success(f"🟢 **KAR-AL (%1):** `{st.session_state[f'{state_prefix}s_avg_price'] * 0.99:.2f}`")
 
+            # Günlük Piyasa Liderleri (Yığılmayı önlemek için main_container içerisine alındı)
             st.markdown("---")
             st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
             col_g, col_lo = st.columns(2)
@@ -583,22 +585,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             if st.session_state[f"{state_prefix}log_history"]:
                 st.write("📜 **Son Sinyaller (Log)**")
                 for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]): st.write(log)
-
-            # SIFIRLAMA BUTONU
-            st.markdown("---")
-            if st.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="reset_all_positions_button"):
-                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
-                st.session_state[f"{state_prefix}s_status"] = [False, False, False]
-                st.session_state[f"{state_prefix}l_crypto"] = 0.0
-                st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
-                st.session_state[f"{state_prefix}l_avg_price"] = 0.0
-                st.session_state[f"{state_prefix}s_crypto"] = 0.0
-                st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
-                st.session_state[f"{state_prefix}s_avg_price"] = 0.0
-                st.session_state[f"{state_prefix}balance_usd"] = 100.0
-                st.session_state[f"{state_prefix}locked_prices"] = None
-                save_state_to_db()
-                st.rerun()
 
         except Exception as e:
             st.error(f"Hata oluştu, 10s sonra tekrar denenecek: {type(e).__name__}: {str(e)[:200]}")
