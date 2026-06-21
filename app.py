@@ -10,7 +10,6 @@ import plotly.graph_objects as go
 from supabase import create_client, Client
 
 # ================= EN BAŞTA BORSA NESNESİNİN TANIMLANMASI =================
-# HATA GİDERİCİ: exchange nesnesi borsa bağlantı hatası vermemesi için en tepeye alındı.
 exchange = ccxt.gate({'options': {'defaultType': 'swap'}})
 
 # ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
@@ -33,7 +32,7 @@ if not check_password(): st.stop()
 
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
-# Flicker-Free CSS
+# Flicker-Free CSS (Kararma Önleyici)
 st.markdown("<style>div[data-testid='stAppViewBlockContainer']{opacity:1.0!important;transition:none!important;}div[data-testid='stStatusWidget']{display:none!important;visibility:hidden!important;}</style>", unsafe_allow_html=True)
 
 # Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz (Backtest sayfanız için gerekli)
@@ -46,7 +45,7 @@ supabase_url = "https://ahnwbxfghccotwnlhzgl.supabase.co"
 supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFobndieGZnaGNjb3R3bmxoemdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwMTI3NzcsImV4cCI6MjA5NzU4ODc3N30.9cR5NBti19ddH7UivdcikYFoCRwk42mIkOkElYqT2Oc"
 supabase: Client = create_client(supabase_url, supabase_key)
 
-# ================= MATEMATİKSEL FONKSİYONLAR =================
+# ================= MATEMATİKSEL VE YARDIMCI FONKSİYONLAR =================
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(period).mean()
@@ -130,7 +129,7 @@ def estimate_liquidation_pools(symbol):
     except:
         return pd.DataFrame(), pd.DataFrame()
 
-# Non-Repainting NW Filtresi ve Grafik Çizimi
+# Non-Repainting Nadaraya-Watson Filtresi ve Grafik Çizimi
 def nadaraya_watson_estimator(src, h=8):
     n = len(src)
     estimates = np.zeros(n)
@@ -209,7 +208,7 @@ def save_state_to_db():
             "log_history": st.session_state[f"{state_prefix}log_history"]
         }
         supabase.table("bot_state").upsert(data).execute()
-    except Exception as e: st.sidebar.error(f"Veritabanı hatası: {e}")
+    except Exception as e: st.sidebar.error(f"Veritabanı kaydı başarısız: {e}")
 
 try:
     ticker_info = exchange.fetch_ticker(selected_symbol)
@@ -241,7 +240,7 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
     bt_sl = col_bt5.slider("3. Kademe Stop-Loss Oranı (%)", min_value=0.5, max_value=10.0, value=2.0, step=0.1, key="backtest_sl_slider") / 100.0
     
     if st.button("▶️ Geriye Dönük Testi Çalıştır", key="backtest_run_button"):
-        with st.spinner("Geçmiş veriler çekiliyor..."):
+        with st.spinner("Geçmiş veriler çekiliyor ve analiz ediliyor..."):
             try:
                 bt_raw = exchange.fetch_ohlcv(selected_symbol, bt_tf, limit=int(bt_limit))
                 df_bt = pd.DataFrame(bt_raw, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
@@ -251,25 +250,41 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                 df_bt = calculate_nw_bands(df_bt, bt_std * 0.85, "_K2")
                 df_bt = calculate_nw_bands(df_bt, bt_std, "_K3")
                 
-                initial_balance, balance = 1000.0, 1000.0
-                l_status, l_crypto, l_usd_spent, l_avg_price = [False, False, False], 0.0, 0.0, 0.0
-                equity_curve, trade_logs = [], []
+                initial_balance = 1000.0
+                balance = initial_balance
+                
+                l_status = [False, False, False]
+                l_crypto = 0.0
+                l_usd_spent = 0.0
+                l_avg_price = 0.0
+                
+                equity_curve = []
+                trade_logs = []
                 
                 for i, row in df_bt.iterrows():
-                    close, t_time = row["Kapanis"], row["Zaman"]
+                    close = row["Kapanis"]
+                    t_time = row["Zaman"]
                     
                     if sum(l_status) > 0:
                         l_tp_target = l_avg_price * (1 + bt_tp)
                         if l_status[2] and close <= (df_bt.at[i, "NW_Alt_K3"] * (1 - bt_sl)):
                             pnl_usd = (l_crypto * close) - l_usd_spent
                             balance += l_crypto * close
-                            trade_logs.append({"Tür": "LONG STOP-LOSS", "Kapanış Zamanı": t_time, "Giriş Fiyatı": l_avg_price, "Kapanış Fiyatı": close, "Kar/Zarar ($)": pnl_usd, "Kalan Bakiye": balance})
-                            l_crypto, l_usd_spent, l_avg_price, l_status = 0.0, 0.0, 0.0, [False, False, False]
+                            trade_logs.append({
+                                "Tür": "LONG STOP-LOSS", "Kapanış Zamanı": t_time, 
+                                "Giriş Fiyatı": l_avg_price, "Kapanış Fiyatı": close, 
+                                "Kar/Zarar ($)": pnl_usd, "Kalan Bakiye": balance
+                            })
+                            l_crypto, l_usd_spent, l_avg_price = 0.0, 0.0, 0.0, [False, False, False]
                         elif close >= l_tp_target:
                             pnl_usd = (l_crypto * close) - l_usd_spent
                             balance += l_crypto * close
-                            trade_logs.append({"Tür": "LONG KAR-AL", "Kapanış Zamanı": t_time, "Giriş Fiyatı": l_avg_price, "Kapanış Fiyatı": close, "Kar/Zarar ($)": pnl_usd, "Kalan Bakiye": balance})
-                            l_crypto, l_usd_spent, l_avg_price, l_status = 0.0, 0.0, 0.0, [False, False, False]
+                            trade_logs.append({
+                                "Tür": "LONG KAR-AL", "Kapanış Zamanı": t_time, 
+                                "Giriş Fiyatı": l_avg_price, "Kapanış Fiyatı": close, 
+                                "Kar/Zarar ($)": pnl_usd, "Kalan Bakiye": balance
+                            })
+                            l_crypto, l_usd_spent, l_avg_price = 0.0, 0.0, 0.0, [False, False, False]
                             
                     for idx, th, val in zip([0, 1, 2], ["_K1", "_K2", "_K3"], [0.05, 0.10, 0.25]):
                         if close <= row[f"NW_Alt{th}"] and (idx == 0 or l_status[idx-1]) and not l_status[idx]:
@@ -284,6 +299,10 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                     
                 df_equity = pd.DataFrame({"Zaman": df_bt["Zaman"], "Bakiye": equity_curve})
                 df_trades = pd.DataFrame(trade_logs)
+                
+                st.markdown("---")
+                st.write("📈 **Simülasyon Sonuçları**")
+                
                 if not df_trades.empty:
                     win_rate = (len(df_trades[df_trades["Kar/Zarar ($)"] > 0]) / len(df_trades)) * 100.0
                     col_r1, col_r2, col_r3, col_r4 = st.columns(4)
@@ -293,8 +312,9 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                     col_r4.metric("Toplam İşlem", f"{len(df_trades)}")
                     
                     fig_bt = go.Figure()
-                    fig_bt.add_trace(go.Scatter(x=df_equity["Zaman"], y=df_equity["Bakiye"], name="Bakiye", line=dict(color="gold", width=2.5)))
-                    fig_bt.update_layout(title="Equity Curve", template="plotly_dark", height=400)
+                    fig_bt.add_trace(go.Scatter(x=df_equity["Zaman"], y=df_equity["Bakiye"], name="Bakiye Gelişimi (Equity)", line=dict(color="gold", width=2.5)))
+                    fig_bt.add_hline(y=initial_balance, line=dict(color="white", width=1, dash="dash"))
+                    fig_bt.update_layout(title="Bakiye Gelişim Grafiği (Equity Curve)", template="plotly_dark", xaxis_title="Zaman", yaxis_title="Bakiye (USD)", margin=dict(l=20, r=20, t=40, b=20), height=400, hovermode="x unified")
                     st.plotly_chart(fig_bt, use_container_width=True, key="backtest_plotly_equity_chart_unique")
                     st.dataframe(df_trades)
                 else: st.warning("Test kriterlerine uygun işlem gerçekleşmedi.")
@@ -439,7 +459,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.session_state[f"{state_prefix}log_history"].append(msg)
                     save_state_to_db()
 
-            # SHORT GİRİŞLERİ
+            # SHORT GİRİŞLERİ - HATA GİDERİCİ: Cliff yazım hatası tamamen temizlendi
             for idx, th, val in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes):
                 if current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]:
                     st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
