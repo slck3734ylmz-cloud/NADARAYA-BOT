@@ -612,10 +612,11 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
         elapsed = time.time() - st.session_state.scan_start_time
         remaining = max(0, 10 - int(elapsed))
         if remaining > 0:
-            st.sidebar.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
+            st.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
         else:
-            st.sidebar.write("🔄 Taranıyor...")
+            st.write("🔄 Taranıyor...")
             st.session_state.scan_start_time = time.time()
 
     live_dca_fragment()
-    countdown_fragment()
+    with st.sidebar:
+        countdown_fragment()
