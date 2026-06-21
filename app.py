@@ -15,8 +15,8 @@ telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "665969213"
 # =========================================================================
 
-# GATE.IO FUTURES BAĞLANTISI (Amerika IP engelsiz ve kuruşu kuruşuna doğru fiyatlar)
-exchange = ccxt.gateio()
+# GATE.IO FUTURES BAĞLANTISI (Kraken ve Binance engelsiz, en kararlı bağlantı)
+exchange = ccxt.gate()
 
 # ================= GÖMÜLÜ CANLI FİYAT VE YÜZDELİKLİ TARAYICI =================
 @st.cache_data(ttl=300)  # Sitenin kasmaması için listeyi 5 dakikada bir günceller
@@ -27,16 +27,19 @@ def get_top_50_volume_coins():
         for symbol, ticker in tickers.items():
             # Gate.io sürekli vadeli kontratları ':USDT' ile biter
             if symbol.endswith(':USDT'):
-                volume = ticker.get('quoteVolume') or 0.0
-                price = ticker.get('last') or ticker.get('close') or 0.0
-                change = ticker.get('percentage') or 0.0  # 24h yüzde değişimi
+                # Boş veri kontrolü (None-guard)
+                quote_vol = ticker.get('quoteVolume')
+                if quote_vol is None:
+                    base_vol = ticker.get('baseVolume') or 0.0
+                    last_price = ticker.get('last') or ticker.get('close') or 0.0
+                    quote_vol = base_vol * last_price
                 
-                if volume > 0 and price > 0:
+                if quote_vol is not None and quote_vol > 0:
                     usd_tickers.append({
                         'symbol': symbol, 
-                        'volume': volume, 
-                        'price': price, 
-                        'change': change
+                        'volume': quote_vol, 
+                        'price': ticker.get('last') or ticker.get('close') or 0.0, 
+                        'change': ticker.get('percentage') or 0.0
                     })
         
         if len(usd_tickers) == 0:
@@ -300,7 +303,7 @@ while True:
         # =================== EKRAN GÜNCELLEMELERİ (WEB UI) ===================
         with title_placeholder.container():
             st.title(f"📊 {selected_symbol.split(':')[0]} Vadeli DCA Canlı Takip Paneli")
-            st.write(f"Binance Futures Canlı Fiyatı: **{current_price:.2f} USDT**")
+            st.write(f"Gate.io Futures Canlı Fiyatı: **{current_price:.2f} USDT**")
 
         with trend_placeholder.container():
             col_t1, col_t2 = st.columns(2)
