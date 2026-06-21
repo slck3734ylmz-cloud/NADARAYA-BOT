@@ -4,8 +4,7 @@ import pandas as pd
 import numpy as np
 import time
 import requests
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
+import plotly.graph_objects as go
 from supabase import create_client, Client
 
 # ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
@@ -36,10 +35,24 @@ if not check_password():
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
-# Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz
-plt.style.use('dark_background')
+# ================= FLICKER-FREE (KIPIRDAMASIZ) CSS ENJEKSİYONU =================
+st.markdown(
+    """
+    <style>
+    div[data-testid="stAppViewBlockContainer"] {
+        opacity: 1.0 !important;
+        transition: none !important;
+    }
+    div[data-testid="stStatusWidget"] {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-# ================= ENTEGRE EDİLMİŞ TELEGRAM VE VERİTABANI AYARLARINIZ =================
+# Telegram ve Supabase Ayarları
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
 
@@ -56,6 +69,14 @@ exchange = ccxt.gate({
         'defaultType': 'swap',
     }
 })
+
+# ================= MATEMATİKSEL RSI HESAPLAMA ALGORİTMASI =================
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
+    rs = gain / (loss + 1e-9)
+    return 100 - (100 / (1 + rs))
 
 # ================= MATEMATİKSEL RSI IRAKSAMA TESPİT ALGORİTMASI =================
 def detect_rsi_divergence(closes, rsis):
@@ -367,6 +388,34 @@ def calculate_nw_bands(df, std_multiplier, col_suffix):
     df[f"NW_Alt{col_suffix}"] = df["NW_Merkez"] - (std_multiplier * df["Sapma_Std"])
     return df
 
+# ================= ENTEGRE EDİLMİŞ ETKİLEŞİMLİ GÖSTERİM FONKSİYONU (PLOTLY) =================
+def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l_avg=0.0, s_avg=0.0):
+    fig = go.Figure()
+    # Ana anlık fiyat çizgisi
+    fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=df_subset[price_col], name="Anlık Fiyat", line=dict(color='royalblue', width=2)))
+    # Üst direnç bandı
+    fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=df_subset[ust_band_col], name="Üst Band (Satış)", line=dict(color='crimson', width=1.5, dash='dash')))
+    # Alt destek bandı
+    fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=df_subset[alt_band_col], name="Alt Band (Alış)", line=dict(color='limegreen', width=1.5, dash='dash')))
+    
+    # Ortalama pozisyon maliyet çizgileri
+    if l_avg > 0:
+        fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=[l_avg]*len(df_subset), name="Long Maliyet Ort.", line=dict(color='green', width=1.5)))
+    if s_avg > 0:
+        fig.add_trace(go.Scatter(x=df_subset["Zaman"], y=[s_avg]*len(df_subset), name="Short Maliyet Ort.", line=dict(color='red', width=1.5)))
+        
+    fig.update_layout(
+        title=title,
+        template="plotly_dark",
+        xaxis_title="Zaman",
+        yaxis_title="Fiyat (USDT)",
+        hovermode="x unified",  # İmlecin fiyata göre koordinatları canlı takip etmesini sağlar
+        margin=dict(l=20, r=20, t=40, b=20),
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
 # ================= MOD 1: GERİYE DÖNÜK TEST (BACKTEST) MODU =================
 if app_mode == "📊 Geriye Dönük Test (Backtest)":
     st.title("📊 Geriye Dönük Test (Backtest) Masası")
@@ -478,14 +527,19 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                     col_r3.metric("Win Rate (Kazanma Oranı)", f"%{win_rate:.1f}")
                     col_r4.metric("Toplam İşlem", f"{len(df_trades)}")
                     
-                    fig_bt, ax_bt = plt.subplots(figsize=(15, 5), facecolor='#0e1117')
-                    ax_bt.set_facecolor('#0e1117')
-                    ax_bt.plot(df_equity["Zaman"], df_equity["Bakiye"], color="gold", label="Bakiye Gelişimi (Equity)")
-                    ax_bt.axhline(y=initial_balance, color="white", linestyle="--", alpha=0.3)
-                    ax_bt.legend()
-                    ax_bt.grid(True, color='white', alpha=0.03)
-                    st.pyplot(fig_bt)
-                    plt.close(fig_bt)
+                    fig_bt = go.Figure()
+                    fig_bt.add_trace(go.Scatter(x=df_equity["Zaman"], y=df_equity["Bakiye"], name="Bakiye Gelişimi (Equity)", line=dict(color="gold", width=2.5)))
+                    fig_bt.add_hline(y=initial_balance, line=dict(color="white", width=1, dash="dash"))
+                    fig_bt.update_layout(
+                        title="Bakiye Gelişim Grafiği (Equity Curve)",
+                        template="plotly_dark",
+                        xaxis_title="Zaman",
+                        yaxis_title="Bakiye (USD)",
+                        margin=dict(l=20, r=20, t=40, b=20),
+                        height=400,
+                        hovermode="x unified"
+                    )
+                    st.plotly_chart(fig_bt, use_container_width=True, key="backtest_plotly_equity_chart_unique")
                     
                     st.write("📜 **Gerçekleşen Geçmiş İşlem Detayları**")
                     st.dataframe(df_trades)
@@ -518,7 +572,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
         save_state_to_db()
         st.rerun()
 
-    # Geri sayım sayacı alanı
     st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
     countdown_placeholder = st.sidebar.empty()
 
@@ -552,84 +605,65 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             is_volatile = current_std > historical_median_std
             market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
-            # 4. CANLI VERİLERİ VE RESAMPLE DİLİMLERİNİ HESAPLA
+            # =================== 4. YENİ GELİŞMİŞ VERİ VE RESAMPLE YAPISI ===================
+            # 1 Dakikalık veriler (Master veri)
+            raw_candles = exchange.fetch_ohlcv(selected_symbol, "1m", limit=1000)
+            df_1m = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            df_1m["Zaman"] = pd.to_datetime(df_1m["Zaman"], unit="ms")
+            df_1m = calculate_nw_bands(df_1m, 3.0, "_1m")
+            df_1m["RSI"] = calculate_rsi(df_1m["Kapanis"])
+
+            # 5 Dakikalık resample ve hesaplamalar
+            df_5m = df_1m.resample('5min', on='Zaman').agg({'Acilis':'first', 'Yuksek':'max', 'Dusuk':'min', 'Kapanis':'last', 'Hacim':'sum'}).reset_index()
+            df_5m = calculate_nw_bands(df_5m, 3.0, "_5m")
+            df_5m["RSI"] = calculate_rsi(df_5m["Kapanis"])
+
+            # 15 Dakikalık resample ve hesaplamalar
+            df_15m = df_1m.resample('15min', on='Zaman').agg({'Acilis':'first', 'Yuksek':'max', 'Dusuk':'min', 'Kapanis':'last', 'Hacim':'sum'}).reset_index()
+            df_15m = calculate_nw_bands(df_15m, 3.0, "_15m")
+            df_15m["RSI"] = calculate_rsi(df_15m["Kapanis"])
+
+            # 1 Saatlik resample ve hesaplamalar
+            df_1h = df_1m.resample('60min', on='Zaman').agg({'Acilis':'first', 'Yuksek':'max', 'Dusuk':'min', 'Kapanis':'last', 'Hacim':'sum'}).reset_index()
+            df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
+            df_1h["RSI"] = calculate_rsi(df_1h["Kapanis"])
+
+            # 4 Saatlik resample ve hesaplamalar
+            df_4h = df_1m.resample('240min', on='Zaman').agg({'Acilis':'first', 'Yuksek':'max', 'Dusuk':'min', 'Kapanis':'last', 'Hacim':'sum'}).reset_index()
+            df_4h = calculate_nw_bands(df_4h, 3.0, "_4h")
+            df_4h["RSI"] = calculate_rsi(df_4h["Kapanis"])
+
+            # 1 Günlük veriler
+            raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=100)
+            df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+            df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
+            df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
+            df_1d["RSI"] = calculate_rsi(df_1d["Kapanis"])
+
+            df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
+
+            # Dinamik bandlar hangi sisteme göre seçilecek?
             if not is_volatile:
-                raw_candles = exchange.fetch_ohlcv(selected_symbol, "1m", limit=1000)
-                df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-                df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
-                
-                df = calculate_nw_bands(df, 3.0, "_5m")
-                df_1h = df.resample("5min", on="Zaman").last().ffill().reset_index()
-                df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
-                df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h"]].sort_values("Zaman"), on="Zaman", direction="backward")
-                
-                df_4h_res = df.resample("15min", on="Zaman").last().ffill().reset_index()
-                df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
-                df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h"]].sort_values("Zaman"), on="Zaman", direction="backward")
-                
-                raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=100)
-                df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-                df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
-                df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
-                
+                dyn_alt_5m = df_1m.iloc[-1]["NW_Alt_1m"]
+                dyn_alt_1h = df_5m.iloc[-1]["NW_Alt_5m"]
+                dyn_alt_4h = df_15m.iloc[-1]["NW_Alt_15m"]
+                dyn_ust_5m = df_1m.iloc[-1]["NW_Ust_1m"]
+                dyn_ust_1h = df_5m.iloc[-1]["NW_Ust_5m"]
+                dyn_ust_4h = df_15m.iloc[-1]["NW_Ust_15m"]
                 l1_lbl, l2_lbl, l3_lbl = "Kademe 1 (1m)", "Kademe 2 (5m)", "Kademe 3 (15m)"
                 s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (1m)", "Kademe 2 (5m)", "Kademe 3 (15m)"
                 active_engine_name = "⏱️ SİSTEM A: ULTRA HIZLI SCALP (1m/5m/15m)"
             else:
-                raw_candles = exchange.fetch_ohlcv(selected_symbol, "5m", limit=1000)
-                df = pd.DataFrame(raw_candles, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-                df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
-                
-                df = calculate_nw_bands(df, 3.0, "_5m")
-                delta = df["Kapanis"].diff()
-                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-                rs = gain / loss
-                df["RSI_14"] = 100 - (100 / (1 + rs))
-
-                df_1h = df.resample("60min", on="Zaman").last().ffill().reset_index()
-                df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
-                diff_1h = df_1h["Kapanis"].diff()
-                up_1h = diff_1h.clip(lower=0)
-                down_1h = -diff_1h.clip(upper=0)
-                ma_up_1h = up_1h.rolling(14).mean()
-                ma_down_1h = down_1h.rolling(14).mean()
-                rs_1h = ma_up_1h / ma_down_1h
-                df_1h["RSI_14_1h"] = 100 - (100 / (1 + rs_1h))
-                df = pd.merge_asof(df.sort_values("Zaman"), df_1h[["Zaman", "NW_Ust_1h", "NW_Alt_1h", "RSI_14_1h"]].sort_values("Zaman"), on="Zaman", direction="backward")
-
-                df_4h_res = df.resample("240min", on="Zaman").last().ffill().reset_index()
-                df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
-                diff_4h = df_4h_res["Kapanis"].diff()
-                up_4h = diff_4h.clip(lower=0)
-                down_4h = -diff_4h.clip(upper=0)
-                ma_up_4h = up_4h.rolling(14).mean()
-                ma_down_4h = down_4h.rolling(14).mean()
-                rs_4h = ma_up_4h / ma_down_4h
-                df_4h_res["RSI_14_4h"] = 100 - (100 / (1 + rs_4h))
-                df = pd.merge_asof(df.sort_values("Zaman"), df_4h_res[["Zaman", "NW_Ust_4h", "NW_Alt_4h", "RSI_14_4h"]].sort_values("Zaman"), on="Zaman", direction="backward")
-
-                raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=100)
-                df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-                df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
-                df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
-
+                dyn_alt_5m = df_5m.iloc[-1]["NW_Alt_5m"]
+                dyn_alt_1h = df_1h.iloc[-1]["NW_Alt_1h"]
+                dyn_alt_4h = df_4h.iloc[-1]["NW_Alt_4h"]
+                dyn_ust_5m = df_5m.iloc[-1]["NW_Ust_5m"]
+                dyn_ust_1h = df_1h.iloc[-1]["NW_Ust_1h"]
+                dyn_ust_4h = df_4h.iloc[-1]["NW_Ust_4h"]
                 l1_lbl, l2_lbl, l3_lbl = "Kademe 1 (5m)", "Kademe 2 (1h)", "Kademe 3 (4h)"
                 s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (5m)", "Kademe 2 (1h)", "Kademe 3 (4h)"
                 active_engine_name = "🌎 SİSTEM B: MAKRO TREND (5m/1h/4h)"
 
-            df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
-
-            latest_row = df.iloc[-1]
-            
-            dyn_alt_5m = latest_row["NW_Alt_5m"]
-            dyn_alt_1h = latest_row["NW_Alt_1h"]
-            dyn_alt_4h = latest_row["NW_Alt_4h"]
-            dyn_ust_5m = latest_row["NW_Ust_5m"]
-            dyn_ust_1h = latest_row["NW_Ust_1h"]
-            dyn_ust_4h = latest_row["NW_Ust_4h"]
-
-            # MANUEL DONDURMA / KİLİTLEME MANTIĞI
             if manual_lock:
                 if st.session_state[f"{state_prefix}locked_prices"] is None:
                     st.session_state[f"{state_prefix}locked_prices"] = {
@@ -651,13 +685,16 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 nw_ust_1h = dyn_ust_1h
                 nw_ust_4h = dyn_ust_4h
             
-            rsi_5m = latest_row["RSI_14"] if "RSI_14" in latest_row else 50.0
-            rsi_1h = latest_row["RSI_14_1h"] if "RSI_14_1h" in latest_row else 50.0
-            rsi_4h = latest_row["RSI_14_4h"] if "RSI_14_4h" in latest_row else 50.0
+            rsi_1m_val = df_1m.iloc[-1]["RSI"]
+            rsi_5m_val = df_5m.iloc[-1]["RSI"]
+            rsi_15m_val = df_15m.iloc[-1]["RSI"]
+            rsi_1h_val = df_1h.iloc[-1]["RSI"]
+            rsi_4h_val = df_4h.iloc[-1]["RSI"]
+            rsi_1d_val = df_1d.iloc[-1]["RSI"]
 
-            bull_div_5m, bear_div_5m = detect_rsi_divergence(df["Kapanis"].values, df["RSI_14"].values) if "RSI_14" in df else (False, False)
-            bull_div_1h, bear_div_1h = detect_rsi_divergence(df_1h["Kapanis"].values, df_1h["RSI_14_1h"].values) if "RSI_14_1h" in df_1h else (False, False)
-            bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h_res["Kapanis"].values, df_4h_res["RSI_14_4h"].values) if "RSI_14_4h" in df_4h_res else (False, False)
+            bull_div_5m, bear_div_5m = detect_rsi_divergence(df_5m["Kapanis"].values, df_5m["RSI"].values)
+            bull_div_1h, bear_div_1h = detect_rsi_divergence(df_1h["Kapanis"].values, df_1h["RSI"].values)
+            bull_div_4h, bear_div_4h = detect_rsi_divergence(df_4h["Kapanis"].values, df_4h["RSI"].values)
 
             # LONG POZİSYON ÇIKIŞLARI
             if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
@@ -796,71 +833,44 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 
                 with col_left:
                     st.subheader("📈 Canlı Fiyat ve Nadaraya-Watson Zarf Grafikleri")
-                    tab_5m, tab_1h, tab_4h, tab_1d = st.tabs([
-                        "⏱️ 5 Dakikalık Grafik", "⏱️ 1 Saatlik Grafik", "⏱️ 4 Saatlik Grafik", "🌎 1 Günlük Grafik"
+                    tab_1m, tab_5m, tab_15m, tab_1h, tab_4h, tab_1d = st.tabs([
+                        "⏱️ 1m", "⏱️ 5m", "⏱️ 15m", "⏱️ 1h", "⏱️ 4h", "🌎 1d"
                     ])
-                    df_subset = df.tail(100)
                     
+                    with tab_1m:
+                        st.plotly_chart(draw_plotly_chart(
+                            df_1m.tail(100), "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1 Dakikalık Grafik",
+                            st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']
+                        ), use_container_width=True, key="live_plotly_chart_1m_unique")
+
                     with tab_5m:
-                        fig1, ax1 = plt.subplots(figsize=(15, 6), facecolor='#0e1117')
-                        ax1.set_facecolor('#0e1117')
-                        ax1.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2.5)
-                        ax1.plot(df_subset["Zaman"], df_subset["NW_Alt_5m"], label="Alt Band (5m - 3.0 Std)", color="limegreen", linestyle="--")
-                        ax1.plot(df_subset["Zaman"], df_subset["NW_Ust_5m"], label="Üst Band (5m - 3.0 Std)", color="crimson", linestyle="--")
-                        if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-                            ax1.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
-                        if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-                            ax1.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
-                        ax1.legend(loc="upper left")
-                        ax1.grid(True, color='white', alpha=0.03)
-                        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-                        st.pyplot(fig1)
-                        plt.close(fig1)
+                        st.plotly_chart(draw_plotly_chart(
+                            df_5m.tail(100), "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5 Dakikalık Grafik",
+                            st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']
+                        ), use_container_width=True, key="live_plotly_chart_5m_unique")
+
+                    with tab_15m:
+                        st.plotly_chart(draw_plotly_chart(
+                            df_15m.tail(100), "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15 Dakikalık Grafik",
+                            st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']
+                        ), use_container_width=True, key="live_plotly_chart_15m_unique")
                         
                     with tab_1h:
-                        fig2, ax2 = plt.subplots(figsize=(15, 6), facecolor='#0e1117')
-                        ax2.set_facecolor('#0e1117')
-                        ax2.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2)
-                        ax2.plot(df_subset["Zaman"], df_subset["NW_Alt_1h"], label="Alt Band (1h - 3.0 Std)", color="forestgreen", linestyle="--")
-                        ax2.plot(df_subset["Zaman"], df_subset["NW_Ust_1h"], label="Üst Band (1h - 3.0 Std)", color="firebrick", linestyle="--")
-                        if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-                            ax2.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
-                        if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-                            ax2.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
-                        ax2.legend(loc="upper left")
-                        ax2.grid(True, color='white', alpha=0.03)
-                        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-                        st.pyplot(fig2)
-                        plt.close(fig2)
+                        st.plotly_chart(draw_plotly_chart(
+                            df_1h.tail(100), "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1 Saatlik Grafik",
+                            st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']
+                        ), use_container_width=True, key="live_plotly_chart_1h_unique")
                         
                     with tab_4h:
-                        fig3, ax3 = plt.subplots(figsize=(15, 6), facecolor='#0e1117')
-                        ax3.set_facecolor('#0e1117')
-                        ax3.plot(df_subset["Zaman"], df_subset["Kapanis"], label="Anlık Fiyat (5m)", color="royalblue", linewidth=2)
-                        ax3.plot(df_subset["Zaman"], df_subset["NW_Alt_4h"], label="Alt Band (4h - 3.0 Std)", color="darkgreen", linestyle="-")
-                        ax3.plot(df_subset["Zaman"], df_subset["NW_Ust_4h"], label="Üst Band (4h - 3.0 Std)", color="darkred", linestyle="-")
-                        if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-                            ax3.axhline(y=st.session_state[f"{state_prefix}l_avg_price"], color="green", linestyle="-", alpha=0.6, label="Long Ort.")
-                        if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-                            ax3.axhline(y=st.session_state[f"{state_prefix}s_avg_price"], color="red", linestyle="-", alpha=0.6, label="Short Ort.")
-                        ax3.legend(loc="upper left")
-                        ax3.grid(True, color='white', alpha=0.03)
-                        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-                        st.pyplot(fig3)
-                        plt.close(fig3)
+                        st.plotly_chart(draw_plotly_chart(
+                            df_4h.tail(100), "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4 Saatlik Grafik",
+                            st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']
+                        ), use_container_width=True, key="live_plotly_chart_4h_unique")
                         
                     with tab_1d:
-                        fig4, ax4 = plt.subplots(figsize=(15, 6), facecolor='#0e1117')
-                        ax4.set_facecolor('#0e1117')
-                        df_1d_subset = df_1d.tail(30)
-                        ax4.plot(df_1d_subset["Zaman"], df_1d_subset["Kapanis"], label="Günlük Kapanış Fiyatı", color="royalblue", linewidth=2.5)
-                        ax4.plot(df_1d_subset["Zaman"], df_1d_subset["NW_Alt_1d"], label="Alt Band (1d - 3.0 Std)", color="limegreen", linestyle="-")
-                        ax4.plot(df_1d_subset["Zaman"], df_1d_subset["NW_Ust_1d"], label="Üst Band (1d - 3.0 Std)", color="crimson", linestyle="-")
-                        ax4.legend(loc="upper left")
-                        ax4.grid(True, color='white', alpha=0.03)
-                        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%d/%m"))
-                        st.pyplot(fig4)
-                        plt.close(fig4)
+                        st.plotly_chart(draw_plotly_chart(
+                            df_1d.tail(30), "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - Günlük Grafik"
+                        ), use_container_width=True, key="live_plotly_chart_1d_unique")
 
                     st.markdown("---")
                     st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
@@ -897,23 +907,23 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                         st.error(f"🛡️ Emniyet: {warning_msg}")
                     
                     st.markdown("---")
-                    st.write("⚡ **RSI & Momentum Süzgeci**")
-                    col_r1, col_r2, col_r3 = st.columns(3)
-                    with col_r1:
-                        st.write("**5m (Skalp)**")
-                        st.write(f"{rsi_5m:.1f}")
-                        if bull_div_5m: st.success("📈 BOĞA!")
-                        elif bear_div_5m: st.error("📉 AYI!")
-                    with col_r2:
+                    st.write("⚡ **RSI & Momentum Süzgeci (Tüm Zaman Dilimleri)**")
+                    col_rsi_a, col_rsi_b, col_rsi_c = st.columns(3)
+                    with col_rsi_a:
+                        st.write("**1m (Skalp)**")
+                        st.code(f"{rsi_1m_val:.1f}")
                         st.write("**1h (Orta)**")
-                        st.write(f"{rsi_1h:.1f}")
-                        if bull_div_1h: st.success("📈 BOĞA!")
-                        elif bear_div_1h: st.error("📉 AYI!")
-                    with col_r3:
+                        st.code(f"{rsi_1h_val:.1f}")
+                    with col_rsi_b:
+                        st.write("**5m (Hızlı)**")
+                        st.code(f"{rsi_5m_val:.1f}")
                         st.write("**4h (Makro)**")
-                        st.write(f"{rsi_4h:.1f}")
-                        if bull_div_4h: st.success("📈 BOĞA!")
-                        elif bear_div_4h: st.error("📉 AYI!")
+                        st.code(f"{rsi_4h_val:.1f}")
+                    with col_rsi_c:
+                        st.write("**15m (Normal)**")
+                        st.code(f"{rsi_15m_val:.1f}")
+                        st.write("**1d (Ana Trend)**")
+                        st.code(f"{rsi_1d_val:.1f}")
                     
                     st.markdown("---")
                     st.write("🎯 **Canlı Sinyal DCA Yönetim Kartı**")
@@ -949,12 +959,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                             else:
                                 st.warning(f"🛡️ **Emniyet (Stop):** `PASİF` (3. Kademeden Sonra)")
 
-                st.markdown("---")
-                if st.session_state[f"{state_prefix}log_history"]:
-                    st.write("📜 **Son Sinyaller (Log)**")
-                    for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
-                        st.write(log)
-
                 # =================== DÜZELTME: GÜNLÜK PİYASA LİDERLERİ CONTAINER İÇİNE ALINDI ===================
                 # Bu sayede ekran her 10 saniyede bir temizlenirken bu tablolar da silinip yenisi çizilecek, birikme yapmayacaktır.
                 st.markdown("---")
@@ -970,10 +974,17 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                         st.table(df_losers.reset_index(drop=True))
                 # ==============================================================================================
 
-        except Exception as e:
-            st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
-            
-        for remaining in range(10, 0, -1):
-            countdown_placeholder.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
-            time.sleep(1)
-        countdown_placeholder.write("🔄 Taranıyor...")
+                st.markdown("---")
+                if st.session_state[f"{state_prefix}log_history"]:
+                    st.write("📜 **Son Sinyaller (Log)**")
+                    for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]):
+                        st.write(log)
+
+            # SIFIRLAMA BUTONU - KİLİT DIŞINA ALINDI
+            st.markdown("---")
+            if st.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="reset_all_positions_button"):
+                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                st.session_state[f"{state_prefix}l_crypto"] = 0.0
+                st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
+                st.session_state[f"{state_prefix}l_avg_price"] = 0.0
+                st.session_state[f"{state_prefix}s_status"] = [False, False,
