@@ -518,92 +518,91 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.error("🟢 SHORT LİKİDASYON HAVUZLARI")
                     if not df_short_liq.empty: st.table(df_short_liq.reset_index(drop=True))
 
-            with col_right:
-                st.subheader(f"📊 {coin_title} Canlı Terminal")
-                col_live_p, col_live_c = st.columns(2)
-                col_live_p.metric(label="Anlık Fiyat (USDT)", value=f"${current_price:,.2f}")
-                col_live_c.metric(label="24 Saatlik Değişim", value=f"{price_change_24h:+.2f}%")
+                with col_right:
+                    st.subheader(f"📊 {coin_title} Canlı Terminal")
+                    col_live_p, col_live_c = st.columns(2)
+                    col_live_p.metric(label="Anlık Fiyat (USDT)", value=f"${current_price:,.2f}")
+                    col_live_c.metric(label="24 Saatlik Değişim", value=f"{price_change_24h:+.2f}%")
 
-                if manual_lock:
-                    st.warning("🔒 SEVİYELER DONDURULDU: Kademeler el ile kilitlendi.")
-                else:
-                    st.success("🔓 CANLI TAKİP AKTİF: Seviyeler anlık güncelleniyor.")
+                    if manual_lock:
+                        st.warning("🔒 SEVİYELER DONDURULDU: Kademeler el ile kilitlendi.")
+                    else:
+                        st.success("🔓 CANLI TAKİP AKTİF: Seviyeler anlık güncelleniyor.")
 
-                st.write(f"Mevcut Durum: **{market_state_label}**")
-                st.write(f"Aktif Motor  : **{active_engine_name}**")
-                
+                    st.write(f"Mevcut Durum: **{market_state_label}**")
+                    st.write(f"Aktif Motor  : **{active_engine_name}**")
+                    
+                    st.markdown("---")
+                    col_t1, col_t2 = st.columns([1, 1.2])
+                    col_t1.metric(label="4h Genel Trend", value=trend_4h)
+                    if trend_4h == "YUKARI (BOĞA)": st.success(f"🛡️ Emniyet: {warning_msg}")
+                    else: st.error(f"🛡️ Emniyet: {warning_msg}")
+                    
+                    st.markdown("---")
+                    st.write("⚡ **RSI & Momentum Süzgeci (Tüm Zaman Dilimleri)**")
+                    col_rsi_a, col_rsi_b, col_rsi_c = st.columns(3)
+                    with col_rsi_a:
+                        st.write("**1m (Skalp)**"); st.code(f"{rsi_1m_val:.1f}")
+                        st.write("**1h (Orta)**"); st.code(f"{rsi_1h_val:.1f}")
+                    with col_rsi_b:
+                        st.write("**5m (Hızlı)**"); st.code(f"{rsi_5m_val:.1f}")
+                        st.write("**4h (Makro)**"); st.code(f"{rsi_4h_val:.1f}")
+                    with col_rsi_c:
+                        st.write("**15m (Normal)**"); st.code(f"{rsi_15m_val:.1f}")
+                        st.write("**1d (Ana Trend)**"); st.code(f"{rsi_1d_val:.1f}")
+                    
+                    st.markdown("---")
+                    st.write("🎯 **Canlı Sinyal DCA Yönetim Kartı**")
+                    col_l, col_s = st.columns(2)
+                    
+                    with col_l:
+                        st.info("📈 LONG KADEMELERİ")
+                        k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f})" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_5m:.2f})"
+                        k2_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][1] else f"⏳ Bekliyor ({nw_alt_1h:.2f})"
+                        k3_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_4h:.2f})"
+                        st.write(f"**{l1_lbl}:** {k1_status}"); st.write(f"**{l2_lbl}:** {k2_status}"); st.write(f"**{l3_lbl}:** {k3_status}")
+                        if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
+                            st.success(f"🟢 **KAR-AL (%1):** `{st.session_state[f'{state_prefix}l_avg_price'] * 1.01:.2f}`")
+
+                    with col_s:
+                        st.error("📉 SHORT KADEMELERİ")
+                        s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_avg_price']:.2f})" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_5m:.2f})"
+                        s_k2_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][1] else f"⏳ Bekliyor ({nw_ust_1h:.2f})"
+                        s_k3_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_4h:.2f})"
+                        st.write(f"**{s1_lbl}:** {s_k1_status}"); st.write(f"**{s2_lbl}:** {s_k2_status}"); st.write(f"**{s3_lbl}:** {s_k3_status}")
+                        if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
+                            st.success(f"🟢 **KAR-AL (%1):** `{st.session_state[f'{state_prefix}s_avg_price'] * 0.99:.2f}`")
+
                 st.markdown("---")
-                col_t1, col_t2 = st.columns([1, 1.2])
-                col_t1.metric(label="4h Genel Trend", value=trend_4h)
-                if trend_4h == "YUKARI (BOĞA)": st.success(f"🛡️ Emniyet: {warning_msg}")
-                else: st.error(f"🛡️ Emniyet: {warning_msg}")
-                
+                st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
+                col_g, col_lo = st.columns(2)
+                with col_g:
+                    st.success("📈 EN ÇOK YÜKSELENLER")
+                    if not df_gainers.empty: st.table(df_gainers.reset_index(drop=True))
+                with col_lo:
+                    st.error("📉 EN ÇOK DÜŞENLER")
+                    if not df_losers.empty: st.table(df_losers.reset_index(drop=True))
+
                 st.markdown("---")
-                st.write("⚡ **RSI & Momentum Süzgeci (Tüm Zaman Dilimleri)**")
-                col_rsi_a, col_rsi_b, col_rsi_c = st.columns(3)
-                with col_rsi_a:
-                    st.write("**1m (Skalp)**"); st.code(f"{rsi_1m_val:.1f}")
-                    st.write("**1h (Orta)**"); st.code(f"{rsi_1h_val:.1f}")
-                with col_rsi_b:
-                    st.write("**5m (Hızlı)**"); st.code(f"{rsi_5m_val:.1f}")
-                    st.write("**4h (Makro)**"); st.code(f"{rsi_4h_val:.1f}")
-                with col_rsi_c:
-                    st.write("**15m (Normal)**"); st.code(f"{rsi_15m_val:.1f}")
-                    st.write("**1d (Ana Trend)**"); st.code(f"{rsi_1d_val:.1f}")
-                
+                if st.session_state[f"{state_prefix}log_history"]:
+                    st.write("📜 **Son Sinyaller (Log)**")
+                    for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]): st.write(log)
+
+                # SIFIRLAMA BUTONU
                 st.markdown("---")
-                st.write("🎯 **Canlı Sinyal DCA Yönetim Kartı**")
-                col_l, col_s = st.columns(2)
-                
-                with col_l:
-                    st.info("📈 LONG KADEMELERİ")
-                    k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_avg_price']:.2f})" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_5m:.2f})"
-                    k2_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][1] else f"⏳ Bekliyor ({nw_alt_1h:.2f})"
-                    k3_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_4h:.2f})"
-                    st.write(f"**{l1_lbl}:** {k1_status}"); st.write(f"**{l2_lbl}:** {k2_status}"); st.write(f"**{l3_lbl}:** {k3_status}")
-                    if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-                        st.success(f"🟢 **KAR-AL (%1):** `{st.session_state[f'{state_prefix}l_avg_price'] * 1.01:.2f}`")
-
-                with col_s:
-                    st.error("📉 SHORT KADEMELERİ")
-                    s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_avg_price']:.2f})" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_5m:.2f})"
-                    s_k2_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][1] else f"⏳ Bekliyor ({nw_ust_1h:.2f})"
-                    s_k3_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_4h:.2f})"
-                    st.write(f"**{s1_lbl}:** {s_k1_status}"); st.write(f"**{s2_lbl}:** {s_k2_status}"); st.write(f"**{s3_lbl}:** {s_k3_status}")
-                    if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-                        st.success(f"🟢 **KAR-AL (%1):** `{st.session_state[f'{state_prefix}s_avg_price'] * 0.99:.2f}`")
-
-            # Günlük Piyasa Liderleri (Yığılmayı önlemek için main_container içerisine alındı)
-            st.markdown("---")
-            st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
-            col_g, col_lo = st.columns(2)
-            with col_g:
-                st.success("📈 EN ÇOK YÜKSELENLER")
-                if not df_gainers.empty: st.table(df_gainers.reset_index(drop=True))
-            with col_lo:
-                st.error("📉 EN ÇOK DÜŞENLER")
-                if not df_losers.empty: st.table(df_losers.reset_index(drop=True))
-
-            st.markdown("---")
-            if st.session_state[f"{state_prefix}log_history"]:
-                st.write("📜 **Son Sinyaller (Log)**")
-                for log in reversed(st.session_state[f"{state_prefix}log_history"][-3:]): st.write(log)
-
-            # SIFIRLAMA BUTONU
-            st.markdown("---")
-            if st.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="reset_all_positions_button"):
-                st.session_state[f"{state_prefix}l_status"] = [False, False, False]
-                st.session_state[f"{state_prefix}s_status"] = [False, False, False]
-                st.session_state[f"{state_prefix}l_crypto"] = 0.0
-                st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
-                st.session_state[f"{state_prefix}l_avg_price"] = 0.0
-                st.session_state[f"{state_prefix}s_crypto"] = 0.0
-                st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
-                st.session_state[f"{state_prefix}s_avg_price"] = 0.0
-                st.session_state[f"{state_prefix}balance_usd"] = 100.0
-                st.session_state[f"{state_prefix}locked_prices"] = None
-                save_state_to_db()
-                st.rerun()
+                if st.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="reset_all_positions_button"):
+                    st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+                    st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+                    st.session_state[f"{state_prefix}l_crypto"] = 0.0
+                    st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
+                    st.session_state[f"{state_prefix}l_avg_price"] = 0.0
+                    st.session_state[f"{state_prefix}s_crypto"] = 0.0
+                    st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
+                    st.session_state[f"{state_prefix}s_avg_price"] = 0.0
+                    st.session_state[f"{state_prefix}balance_usd"] = 100.0
+                    st.session_state[f"{state_prefix}locked_prices"] = None
+                    save_state_to_db()
+                    st.rerun()
 
         except Exception as e:
             st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
