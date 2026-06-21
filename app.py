@@ -35,9 +35,6 @@ if not check_password():
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 
-# Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz
-plt.style.use('dark_background')
-
 # ================= ENTEGRE EDİLMİŞ TELEGRAM VE VERİTABANI AYARLARINIZ =================
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
@@ -530,7 +527,7 @@ if app_mode == "📊 Geriye Dönük Test (Backtest)":
                     st.write("📜 **Gerçekleşen Geçmiş İşlem Detayları**")
                     st.dataframe(df_trades)
                 else:
-                    st.warning("Seçilen dönemde test kriterlerine uygun işlem gerçekleşmedi.")
+                    st.warning("Seçilen dönemre test kriterlerine uygun işlem gerçekleşmedi.")
                     
             except Exception as ex:
                 st.error(f"Test sırasında hata meydana geldi: {ex}")
@@ -787,7 +784,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 st.session_state[f"{state_prefix}s_usd_spent"] += sell_amt * current_price
                 st.session_state[f"{state_prefix}s_status"][0] = True
                 st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
-                msg = f"📉 *SHORT K1 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
+                msg = f"📈 *SHORT K1 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
@@ -799,7 +796,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 st.session_state[f"{state_prefix}s_usd_spent"] += sell_amt * current_price
                 st.session_state[f"{state_prefix}s_status"][1] = True
                 st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
-                msg = f"📉 *SHORT K2 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
+                msg = f"📈 *SHORT K2 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
@@ -811,7 +808,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                 st.session_state[f"{state_prefix}s_usd_spent"] += sell_amt * current_price
                 st.session_state[f"{state_prefix}s_status"][2] = True
                 st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
-                msg = f"📉 *SHORT K3 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
+                msg = f"📈 *SHORT K3 AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
