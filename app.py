@@ -6,32 +6,7 @@ import time
 import requests
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from supabase import create_client, Client  # BUG FIX: Veritabanı kütüphanesi eklendi
-
-# ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
-def check_password():
-    """Doğru şifre girilmeden hiçbir veritabanı veya borsa verisi yüklenmez."""
-    if "password_correct" not in st.session_state:
-        st.session_state.password_correct = False
-    
-    if st.session_state.password_correct:
-        return True
-        
-    st.markdown("<h2 style='text-align: center; color: white; margin-top: 50px;'>🔒 DCA Terminal Güvenlik Girişi</h2>", unsafe_allow_html=True)
-    col_login, _ = st.columns([1, 1.5])
-    with col_login:
-        user_password = st.text_input("Lütfen şahsi siber güvenlik şifrenizi girin:", type="password")
-        if st.button("Giriş Yap"):
-            if user_password == "dca2026": 
-                st.session_state.password_correct = True
-                st.rerun()
-            else:
-                st.error("❌ Hatalı Şifre! Erişim reddedildi.")
-    return False
-
-if not check_password():
-    st.stop()  # Şifre yanlışsa kodun geri kalanının çalışmasını durdurur
-# =========================================================================
+from supabase import create_client, Client
 
 # Streamlit sayfa yapılandırması - Geniş Ekran Modu Aktif
 st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
@@ -201,7 +176,7 @@ def get_market_movers_and_funding():
     except Exception as e:
         return [], pd.DataFrame(), pd.DataFrame()
 
-# ================= 3 GÜNLÜK SANAL LİKİDASYON HARİTASI HESAPLAMA =================
+# ================= 3 GÜNLÜK SANAL LİKİDASYON HARİTASI HESAPLAMA (GELİŞTİRİLDİ) =================
 @st.cache_data(ttl=300)
 def estimate_liquidation_pools(symbol):
     try:
@@ -233,8 +208,16 @@ def estimate_liquidation_pools(symbol):
                 bin_p = round(liq_p / round_step) * round_step
                 short_liq_bins[bin_p] = short_liq_bins.get(bin_p, 0.0) + vol
                 
+        # En yoğun 3 bölgeyi seçiyoruz
         sorted_long = sorted(long_liq_bins.items(), key=lambda x: x[1], reverse=True)[:3]
         sorted_short = sorted(short_liq_bins.items(), key=lambda x: x[1], reverse=True)[:3]
+        
+        # ================= GÖSTERİM VE SIRALAMA OPTİMİZASYONU =================
+        # LONG Likidasyonları (Destekler): Anlık fiyata en yakın (en yüksek) olan en üstte olmalıdır (Descending)
+        sorted_long.sort(key=lambda x: x[0], reverse=True)
+        # SHORT Likidasyonları (Dirençler): Anlık fiyata en yakın (en düşük) olan en üstte olmalıdır (Ascending)
+        sorted_short.sort(key=lambda x: x[0], reverse=False)
+        # ======================================================================
         
         long_pools = []
         for p, v in sorted_long:
@@ -249,6 +232,7 @@ def estimate_liquidation_pools(symbol):
         return pd.DataFrame(long_pools), pd.DataFrame(short_pools)
     except:
         return pd.DataFrame(), pd.DataFrame()
+# =============================================================================================
 
 # Veritabanını yormamak için toplu borsa analizi tek seferde çekilir
 extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
@@ -428,6 +412,7 @@ while True:
         df_4h_res = calculate_nw_bands(df_4h_res, 3.0, "_4h")
         diff_4h = df_4h_res["Kapanis"].diff()
         up_4h = diff_4h.clip(lower=0)
+        # BUG FIX: down_4h limit süzgeci eklendi
         down_4h = -diff_4h.clip(upper=0)
         ma_up_4h = up_4h.rolling(14).mean()
         ma_down_4h = down_4h.rolling(14).mean()
@@ -676,9 +661,9 @@ while True:
                     st.pyplot(fig4)
                     plt.close(fig4)
 
-                # --- LİKİDASYON HARİTASI TABLOLARI (SOL SÜTUNA ALINDI - SIFIR KAYDIRMA) ---
+                # --- LİKİDASYON HARİTASI (SOL SÜTUNA ALINDI - SIFIR KAYDIRMA) ---
                 st.markdown("---")
-                st.subheader("🎯 3 Günlük Tahmini Likidasyon Yoğunluk Haritası (Liquidation Pools)")
+                st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
                 st.write("Fiyat hareketleri ve hacim birikimlerine göre kaldıraçlı pozisyonların (25x, 50x, 100x) tahmini likidasyon seviyeleri.")
                 col_liq_l, col_liq_s = st.columns(2)
                 
