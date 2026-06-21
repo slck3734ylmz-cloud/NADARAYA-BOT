@@ -35,7 +35,7 @@ st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
 # Flicker-Free CSS (Kararma Önleyici)
 st.markdown("<style>div[data-testid='stAppViewBlockContainer']{opacity:1.0!important;transition:none!important;}div[data-testid='stStatusWidget']{display:none!important;visibility:hidden!important;}</style>", unsafe_allow_html=True)
 
-# Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz (Backtest sayfanız için gerekli)
+# Grafikleri küresel olarak karanlık temaya (Dark Mode) ayarlıyoruz
 plt.style.use('dark_background')
 
 # Telegram ve Supabase Ayarları
@@ -99,7 +99,7 @@ def get_market_movers_and_funding():
         df_l['Değişim (%)'] = df_l['Değişim (%)'].apply(lambda x: f"{x:.2f}%")
         df_l['Fonlama Oranı'] = df_l['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
         df_l['Fiyat (USDT)'] = df_l['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
-        return funding[:10], df_g, df_l # Top 5 dilimi Top 10 olarak genişletildi
+        return funding[:10], df_g, df_l
     except:
         return [], pd.DataFrame(), pd.DataFrame()
 
@@ -176,7 +176,7 @@ selected_symbol = [x['symbol'] for x in top_50_data if x['display'] == selected_
 coin_title = selected_symbol.split(':')[0]
 state_prefix = f"{selected_symbol}_"
 
-# ================= YENİ: YAN PANEL FONLAMA ORANLARI YAZDIRMA (TOP 10) =================
+# ================= YAN PANEL FONLAMA ORANLARI YAZDIRMA =================
 st.sidebar.markdown("---")
 st.sidebar.subheader("💸 En Ekstrem Fonlama Oranları (Top 10)")
 if extreme_rates:
@@ -189,28 +189,50 @@ if extreme_rates:
 else:
     st.sidebar.write("Fonlama oranları yükleniyor...")
 
-try:
-    db_query = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).execute()
-    if db_query.data:
-        db_data = db_query.data[0]
-        for k in ["balance_usd", "l_crypto", "l_usd_spent", "l_avg_price", "s_crypto", "s_usd_spent", "s_avg_price", "log_history"]:
-            st.session_state[f"{state_prefix}{k}"] = db_data[k] if k != "log_history" else (db_data[k] or [])
-        st.session_state[f"{state_prefix}l_status"] = [db_data["l_status_0"], db_data["l_status_1"], db_data["l_status_2"]]
-        st.session_state[f"{state_prefix}s_status"] = [db_data["s_status_0"], db_data["s_status_1"], db_data["s_status_2"]]
-except: pass
-
+# ================= GÜVENLİ DURUM (STATE) YÜKLEME VE EŞLEŞTİRME =================
+# Bellekte ilgili coine ait kayıt yoksa veritabanından çekilir, yoksa varsayılan atanır.
 if f"{state_prefix}balance_usd" not in st.session_state:
-    st.session_state[f"{state_prefix}balance_usd"] = 100.0
-    st.session_state[f"{state_prefix}l_status"] = [False, False, False]
-    st.session_state[f"{state_prefix}l_crypto"] = 0.0
-    st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
-    st.session_state[f"{state_prefix}l_avg_price"] = 0.0
-    st.session_state[f"{state_prefix}s_status"] = [False, False, False]
-    st.session_state[f"{state_prefix}s_crypto"] = 0.0
-    st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
-    st.session_state[f"{state_prefix}s_avg_price"] = 0.0
-    st.session_state[f"{state_prefix}log_history"] = []
-if f"{state_prefix}locked_prices" not in st.session_state: st.session_state[f"{state_prefix}locked_prices"] = None
+    loaded_from_db = False
+    try:
+        db_query = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).execute()
+        if db_query.data:
+            db_data = db_query.data[0]
+            st.session_state[f"{state_prefix}balance_usd"] = db_data.get("balance_usd", 100.0)
+            st.session_state[f"{state_prefix}l_crypto"] = db_data.get("l_crypto", 0.0)
+            st.session_state[f"{state_prefix}l_usd_spent"] = db_data.get("l_usd_spent", 0.0)
+            st.session_state[f"{state_prefix}l_avg_price"] = db_data.get("l_avg_price", 0.0)
+            st.session_state[f"{state_prefix}s_crypto"] = db_data.get("s_crypto", 0.0)
+            st.session_state[f"{state_prefix}s_usd_spent"] = db_data.get("s_usd_spent", 0.0)
+            st.session_state[f"{state_prefix}s_avg_price"] = db_data.get("s_avg_price", 0.0)
+            st.session_state[f"{state_prefix}log_history"] = db_data.get("log_history") or []
+            st.session_state[f"{state_prefix}l_status"] = [
+                db_data.get("l_status_0", False),
+                db_data.get("l_status_1", False),
+                db_data.get("l_status_2", False)
+            ]
+            st.session_state[f"{state_prefix}s_status"] = [
+                db_data.get("s_status_0", False),
+                db_data.get("s_status_1", False),
+                db_data.get("s_status_2", False)
+            ]
+            loaded_from_db = True
+    except:
+        pass
+
+    if not loaded_from_db:
+        st.session_state[f"{state_prefix}balance_usd"] = 100.0
+        st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+        st.session_state[f"{state_prefix}l_crypto"] = 0.0
+        st.session_state[f"{state_prefix}l_usd_spent"] = 0.0
+        st.session_state[f"{state_prefix}l_avg_price"] = 0.0
+        st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+        st.session_state[f"{state_prefix}s_crypto"] = 0.0
+        st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
+        st.session_state[f"{state_prefix}s_avg_price"] = 0.0
+        st.session_state[f"{state_prefix}log_history"] = []
+
+if f"{state_prefix}locked_prices" not in st.session_state: 
+    st.session_state[f"{state_prefix}locked_prices"] = None
 
 def save_state_to_db():
     try:
@@ -397,15 +419,28 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
             df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
             extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
 
+            # dynamic_bands hesaplamasında [iloc[-2]] kullanarak kapanmış muma göre sabitleme yapıldı.
             if not is_volatile:
-                dyn_alt_5m, dyn_alt_1h, dyn_alt_4h = df_1m.iloc[-1]["NW_Alt_1m"], df_5m.iloc[-1]["NW_Alt_5m"], df_15m.iloc[-1]["NW_Alt_15m"]
-                dyn_ust_5m, dyn_ust_1h, dyn_ust_4h = df_1m.iloc[-1]["NW_Ust_1m"], df_5m.iloc[-1]["NW_Ust_5m"], df_15m.iloc[-1]["NW_Ust_15m"]
+                dyn_alt_5m = df_1m.iloc[-2]["NW_Alt_1m"]
+                dyn_alt_1h = df_5m.iloc[-2]["NW_Alt_5m"]
+                dyn_alt_4h = df_15m.iloc[-2]["NW_Alt_15m"]
+                
+                dyn_ust_5m = df_1m.iloc[-2]["NW_Ust_1m"]
+                dyn_ust_1h = df_5m.iloc[-2]["NW_Ust_5m"]
+                dyn_ust_4h = df_15m.iloc[-2]["NW_Ust_15m"]
+                
                 l1_lbl, l2_lbl, l3_lbl = "Kademe 1 (1m)", "Kademe 2 (5m)", "Kademe 3 (15m)"
                 s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (1m)", "Kademe 2 (5m)", "Kademe 3 (15m)"
                 active_engine_name = "⏱️ SİSTEM A: ULTRA HIZLI SCALP (1m/5m/15m)"
             else:
-                dyn_alt_5m, dyn_alt_1h, dyn_alt_4h = df_5m.iloc[-1]["NW_Alt_5m"], df_1h.iloc[-1]["NW_Alt_1h"], df_4h.iloc[-1]["NW_Alt_4h"]
-                dyn_ust_5m, dyn_ust_1h, dyn_ust_4h = df_5m.iloc[-1]["NW_Ust_5m"], df_1h.iloc[-1]["NW_Ust_1h"], df_4h.iloc[-1]["NW_Ust_4h"]
+                dyn_alt_5m = df_5m.iloc[-2]["NW_Alt_5m"]
+                dyn_alt_1h = df_1h.iloc[-2]["NW_Alt_1h"]
+                dyn_alt_4h = df_4h.iloc[-2]["NW_Alt_4h"]
+                
+                dyn_ust_5m = df_5m.iloc[-2]["NW_Ust_5m"]
+                dyn_ust_1h = df_1h.iloc[-2]["NW_Ust_1h"]
+                dyn_ust_4h = df_4h.iloc[-2]["NW_Ust_4h"]
+                
                 l1_lbl, l2_lbl, l3_lbl = "Kademe 1 (5m)", "Kademe 2 (1h)", "Kademe 3 (4h)"
                 s1_lbl, s2_lbl, s3_lbl = "Kademe 1 (5m)", "Kademe 2 (1h)", "Kademe 3 (4h)"
                 active_engine_name = "🌎 SİSTEM B: MAKRO TREND (5m/1h/4h)"
@@ -465,7 +500,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.session_state[f"{state_prefix}s_status"] = [False, False, False]
                     save_state_to_db()
 
-            # LONG GİRİŞLERİ
+            # LONG GİRİŞLERİ (Döngü sonuna break eklenerek ardışık tetiklenme engellendi)
             for idx, th, val in zip([0, 1, 2], [nw_alt_5m, nw_alt_1h, nw_alt_4h], layer_sizes):
                 if current_price <= th and (idx == 0 or st.session_state[f"{state_prefix}l_status"][idx-1]) and not st.session_state[f"{state_prefix}l_status"][idx]:
                     st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
@@ -477,8 +512,9 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     send_telegram_msg(msg)
                     st.session_state[f"{state_prefix}log_history"].append(msg)
                     save_state_to_db()
+                    break
 
-            # SHORT GİRİŞLERİ
+            # SHORT GİRİŞLERİ (Döngü sonuna break eklenerek ardışık tetiklenme engellendi)
             for idx, th, val in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes):
                 if current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]:
                     st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
@@ -490,6 +526,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     send_telegram_msg(msg)
                     st.session_state[f"{state_prefix}log_history"].append(msg)
                     save_state_to_db()
+                    break
 
             # ARAYÜZÜ DOĞRUDAN ÇİZİYORUZ
             col_left, col_right = st.columns([1.6, 1])
@@ -517,7 +554,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     df_subset = df_1d.tail(30)
                     st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key=f"{state_prefix}chart_1d")
 
-                # =================== TASARIMSAL DÜZELTME: DCA KADEMELERİ SOL SÜTUNA (BOŞLUĞA) TAŞINDI ===================
+                # DCA KADEMELERİ
                 st.markdown("---")
                 st.write("🎯 **Canlı Sinyal DCA Yönetim Kartı**")
                 col_l, col_s = st.columns(2)
