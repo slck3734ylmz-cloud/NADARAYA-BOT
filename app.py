@@ -22,7 +22,11 @@ supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 supabase: Client = create_client(supabase_url, supabase_key)
 # ======================================================================================
 
-exchange = ccxt.gate()
+exchange = ccxt.gate({
+    'options': {
+        'defaultType': 'swap',
+    }
+})
 
 @st.cache_data(ttl=300)
 def get_top_50_volume_coins():
