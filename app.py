@@ -208,7 +208,7 @@ def save_state_to_db():
             "log_history": st.session_state[f"{state_prefix}log_history"]
         }
         supabase.table("bot_state").upsert(data).execute()
-    except Exception as e: st.sidebar.error(f"Veritabanı kaydı başarısız: {e}")
+    except Exception as e: st.error(f"Veritabanı kaydı başarısız: {type(e).__name__}: {str(e)[:200]}")
 
 try:
     ticker_info = exchange.fetch_ticker(selected_symbol)
@@ -341,7 +341,6 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
         st.rerun()
 
     st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
-    countdown_placeholder = st.sidebar.empty()
     main_container = st.empty()
 
     @st.fragment(run_every="10s")
@@ -603,7 +602,7 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
                     st.rerun()
 
         except Exception as e:
-            st.sidebar.error(f"Hata oluştu, 5s sonra denenecek: {e}")
+            st.error(f"Hata oluştu, 10s sonra tekrar denenecek: {type(e).__name__}: {str(e)[:200]}")
             time.sleep(5)
 
     @st.fragment(run_every="1s")
@@ -613,9 +612,9 @@ elif app_mode == "🖥️ Canlı DCA Terminal":
         elapsed = time.time() - st.session_state.scan_start_time
         remaining = max(0, 10 - int(elapsed))
         if remaining > 0:
-            countdown_placeholder.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
+            st.sidebar.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
         else:
-            countdown_placeholder.write("🔄 Taranıyor...")
+            st.sidebar.write("🔄 Taranıyor...")
             st.session_state.scan_start_time = time.time()
 
     live_dca_fragment()
