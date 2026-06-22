@@ -695,7 +695,7 @@ def place_futures_order(symbol, side, amount, leverage=None, is_live=False, redu
     except Exception as e:
         return {"paper": False, "status": "error", "error": f"{type(e).__name__}: {str(e)[:200]}"}
 
-# ================= MASAÜSTÜ CANLI DCA TERMINALİ =================
+# ================= YAN PANEL AYARLARI VE NAVİGASYON =================
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ İşlem Modu (MEXC Futures)")
 
@@ -736,6 +736,20 @@ if is_admin and manual_lock != st.session_state.get(f"{state_prefix}manual_lock_
     if not manual_lock:
         st.session_state[f"{state_prefix}locked_prices"] = None
     save_state_to_db()
+
+# ================= YAN PANEL DİNAMİK/MANUEL MOTOR SEÇİMİ =================
+st.sidebar.markdown("---")
+st.sidebar.subheader("🤖 Motor Çalışma Modu")
+engine_choice = st.sidebar.radio(
+    "Motor Seçimi",
+    options=[
+        "🔄 Otomatik Seçim (Algoritmik)",
+        "💤 Sakin Motor (Yatay Sabit)",
+        "⚡ Volatil Motor (Trend Sabit)"
+    ],
+    index=0,
+    key="engine_mode_selection_radio"
+)
 
 col_b1, col_b2 = st.sidebar.columns(2)
 if col_b1.button("🔔 Telegram Test", key="live_telegram_test_button_unique", use_container_width=True, disabled=not is_admin):
@@ -798,14 +812,24 @@ def live_dca_fragment():
 
         price_is_volatile = price_std_now > price_std_median
         volume_confirms = vol_now > vol_median
-        is_volatile = price_is_volatile and volume_confirms
+        auto_is_volatile = price_is_volatile and volume_confirms
 
-        if is_volatile:
-            market_state_label = "⚡ VOLATİL (Trend / Sert Hareket — Hacim Onaylı)"
-        elif price_is_volatile and not volume_confirms:
-            market_state_label = "⚠️ FİYAT OYNAK AMA HACİM DÜŞÜK (Sakin Sayılır)"
+        # Motor seçimine göre dinamik veya el ile sabitleme mantığı
+        selected_engine = st.session_state.get("engine_mode_selection_radio", "🔄 Otomatik Seçim (Algoritmik)")
+        if selected_engine == "💤 Sakin Motor (Yatay Sabit)":
+            is_volatile = False
+            market_state_label = "💤 SAKİN (Yatay Salınım — El ile Sabitlendi)"
+        elif selected_engine == "⚡ Volatil Motor (Trend Sabit)":
+            is_volatile = True
+            market_state_label = "⚡ VOLATİL (Trend / Sert Hareket — El ile Sabitlendi)"
         else:
-            market_state_label = "💤 SAKİN (Yatay Salınım)"
+            is_volatile = auto_is_volatile
+            if is_volatile:
+                market_state_label = "⚡ VOLATİL (Trend / Sert Hareket — Hacim Onaylı)"
+            elif price_is_volatile and not volume_confirms:
+                market_state_label = "⚠️ FİYAT OYNAK AMA HACİM DÜŞÜK (Sakin Sayılır)"
+            else:
+                market_state_label = "💤 SAKİN (Yatay Salınım)"
 
         p1h = TF_PARAMS["1h"]
         raw_1h = exchange.fetch_ohlcv(selected_symbol, "1h", limit=p1h["limit"])
