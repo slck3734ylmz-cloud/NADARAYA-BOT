@@ -154,6 +154,22 @@ def calculate_rsi(series, period=14):
     rs = gain / (loss + 1e-9)
     return 100 - (100 / (1 + rs))
 
+def calculate_atr(df, period=14):
+    """
+    ATR (Average True Range) - standart Wilder yöntemiyle hesaplanır.
+    True Range = max(Yüksek-Düşük, |Yüksek-ÖncekiKapanış|, |Düşük-ÖncekiKapanış|)
+    ATR, bu True Range değerlerinin üstel (smoothed) ortalamasıdır.
+    Piyasanın o anki gerçek oynaklığını (gap'leri de dahil ederek) ölçer.
+    """
+    high, low, close = df["Yuksek"], df["Dusuk"], df["Kapanis"]
+    prev_close = close.shift(1)
+    tr1 = high - low
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = true_range.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    return atr
+
 def detect_rsi_divergence(closes, rsis):
     if len(closes) < 15 or len(rsis) < 15: return False, False
     c, r = closes[-15:], rsis[-15:]
@@ -515,7 +531,6 @@ try:
 except:
     layer_sizes = [0.0001, 0.0004, 0.0012]
 
-target_profit_ratio, stop_loss_ratio = 0.01, 0.02
 def send_telegram_msg(message):
     signed_message = f"🐉 *Kyoun*\n{message}"
     url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
@@ -611,6 +626,7 @@ def live_dca_fragment():
         df_1m["Zaman"] = pd.to_datetime(df_1m["Zaman"], unit="ms")
         df_1m = calculate_nw_bands(df_1m, 3.0, "_1m", h=p1m["h"], std_window=p1m["std_window"])
         df_1m["RSI"] = calculate_rsi(df_1m["Kapanis"], period=p1m["rsi_period"])
+        df_1m["ATR"] = calculate_atr(df_1m, period=14)
 
         p5m = TF_PARAMS["5m"]
         raw_5m = exchange.fetch_ohlcv(selected_symbol, "5m", limit=p5m["limit"])
@@ -618,6 +634,7 @@ def live_dca_fragment():
         df_5m["Zaman"] = pd.to_datetime(df_5m["Zaman"], unit="ms")
         df_5m = calculate_nw_bands(df_5m, 3.0, "_5m", h=p5m["h"], std_window=p5m["std_window"])
         df_5m["RSI"] = calculate_rsi(df_5m["Kapanis"], period=p5m["rsi_period"])
+        df_5m["ATR"] = calculate_atr(df_5m, period=14)
 
         # 15m verisi hem volatilite ölçümü hem de kademe hesaplaması için kullanılır,
         # tek seferde çekilir (önceden iki ayrı API çağrısı yapılıyordu).
@@ -627,6 +644,7 @@ def live_dca_fragment():
         df_15m["Zaman"] = pd.to_datetime(df_15m["Zaman"], unit="ms")
         df_15m = calculate_nw_bands(df_15m, 3.0, "_15m", h=p15m["h"], std_window=p15m["std_window"])
         df_15m["RSI"] = calculate_rsi(df_15m["Kapanis"], period=p15m["rsi_period"])
+        df_15m["ATR"] = calculate_atr(df_15m, period=14)
 
         # Volatilite tespiti: HEM fiyat std'si HEM hacim onayı birlikte gerekir.
         # Sadece fiyat std'sinin kendi medyanına göre yüksek olması yeterli değil
@@ -654,6 +672,7 @@ def live_dca_fragment():
         df_1h["Zaman"] = pd.to_datetime(df_1h["Zaman"], unit="ms")
         df_1h = calculate_nw_bands(df_1h, 3.0, "_1h", h=p1h["h"], std_window=p1h["std_window"])
         df_1h["RSI"] = calculate_rsi(df_1h["Kapanis"], period=p1h["rsi_period"])
+        df_1h["ATR"] = calculate_atr(df_1h, period=14)
 
         # 4h: NW/RSI için kısa pencere (p4h["limit"]), EMA_200 (genel trend) için ise
         # ayrı ve daha uzun bir veri çekişi (250 mum) yapılır; EMA_200 kısa pencerede
@@ -664,6 +683,7 @@ def live_dca_fragment():
         df_4h["Zaman"] = pd.to_datetime(df_4h["Zaman"], unit="ms")
         df_4h = calculate_nw_bands(df_4h, 3.0, "_4h", h=p4h["h"], std_window=p4h["std_window"])
         df_4h["RSI"] = calculate_rsi(df_4h["Kapanis"], period=p4h["rsi_period"])
+        df_4h["ATR"] = calculate_atr(df_4h, period=14)
 
         raw_4h_trend = exchange.fetch_ohlcv(selected_symbol, "4h", limit=250)
         df_4h_trend = pd.DataFrame(raw_4h_trend, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
@@ -677,6 +697,7 @@ def live_dca_fragment():
         df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
         df_1d = calculate_nw_bands(df_1d, 3.0, "_1d", h=p1d["h"], std_window=p1d["std_window"])
         df_1d["RSI"] = calculate_rsi(df_1d["Kapanis"], period=p1d["rsi_period"])
+        df_1d["ATR"] = calculate_atr(df_1d, period=14)
 
         df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
 
@@ -716,6 +737,14 @@ def live_dca_fragment():
         rsi_k3_prev = df_k3.iloc[-3]["RSI"]
         RSI_OVERSOLD, RSI_OVERBOUGHT = 30, 70
 
+        # Her kademenin kendi zaman diliminin ATR değeri - kar-al/stop-loss mesafelerini
+        # piyasanın o anki gerçek oynaklığına göre ölçeklemek için kullanılır.
+        # Kar-al = 1x ATR, Stop-loss = 1.5x ATR (kademe 3'ün ATR'si, en son/ana kademe).
+        atr_k1 = df_k1.iloc[-2]["ATR"]
+        atr_k2 = df_k2.iloc[-2]["ATR"]
+        atr_k3 = df_k3.iloc[-2]["ATR"]
+        ATR_TP_MULT, ATR_SL_MULT = 1.0, 1.5
+
         # Iraksama (divergence) tespiti - her kademenin kendi zaman diliminde,
         # son kapanmış mumlar üzerinden (anlık/oluşmakta olan mum hariç).
         div_k1_bull, div_k1_bear = detect_rsi_divergence(df_k1["Kapanis"].values[:-1], df_k1["RSI"].values[:-1])
@@ -747,8 +776,10 @@ def live_dca_fragment():
             st.session_state[f"{state_prefix}locked_prices"] = None
 
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-            l_tp = st.session_state[f"{state_prefix}l_avg_price"] * (1 + target_profit_ratio)
-            if st.session_state[f"{state_prefix}l_status"][2] and current_price <= (nw_alt_4h * (1 - stop_loss_ratio)):
+            l_avg_price = st.session_state[f"{state_prefix}l_avg_price"]
+            l_tp = l_avg_price + (ATR_TP_MULT * atr_k3)
+            l_sl = l_avg_price - (ATR_SL_MULT * atr_k3)
+            if st.session_state[f"{state_prefix}l_status"][2] and current_price <= l_sl:
                 order_result = place_futures_order(selected_symbol, "sell", st.session_state[f"{state_prefix}l_crypto"], is_live=live_trading_enabled, reduce_only=True)
                 l_avg_for_msg = st.session_state[f"{state_prefix}l_avg_price"]
                 l_crypto_for_msg = st.session_state[f"{state_prefix}l_crypto"]
@@ -757,7 +788,7 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"🔴 *[{mode_tag}] LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {l_avg_for_msg:.2f}\nSatış: {current_price:.2f}\nKapatılan Miktar: {l_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nK/Z: {l_pnl_usd:+.2f} USDT ({l_pnl_pct:+.2f}%){order_note}"
+                msg = f"🔴 *[{mode_tag}] LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {l_avg_for_msg:.2f}\nSatış: {current_price:.2f}\nKapatılan Miktar: {l_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nATR Mesafe: {ATR_SL_MULT}x{atr_k3:.2f}\nK/Z: {l_pnl_usd:+.2f} USDT ({l_pnl_pct:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
@@ -773,7 +804,7 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"🟢 *[{mode_tag}] LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {l_avg_for_msg:.2f}\nSatış: {current_price:.2f}\nKapatılan Miktar: {l_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nK/Z: {l_pnl_usd:+.2f} USDT ({l_pnl_pct:+.2f}%){order_note}"
+                msg = f"🟢 *[{mode_tag}] LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {l_avg_for_msg:.2f}\nSatış: {current_price:.2f}\nKapatılan Miktar: {l_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nATR Mesafe: {ATR_TP_MULT}x{atr_k3:.2f}\nK/Z: {l_pnl_usd:+.2f} USDT ({l_pnl_pct:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
@@ -783,8 +814,9 @@ def live_dca_fragment():
 
 
         if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-            s_stop = st.session_state[f"{state_prefix}s_avg_price"] * (1 + stop_loss_ratio)
-            s_tp = st.session_state[f"{state_prefix}s_avg_price"] * (1 - target_profit_ratio)
+            s_avg_price = st.session_state[f"{state_prefix}s_avg_price"]
+            s_stop = s_avg_price + (ATR_SL_MULT * atr_k3)
+            s_tp = s_avg_price - (ATR_TP_MULT * atr_k3)
             if st.session_state[f"{state_prefix}s_status"][2] and current_price >= s_stop:
                 order_result = place_futures_order(selected_symbol, "buy", st.session_state[f"{state_prefix}s_crypto"], is_live=live_trading_enabled, reduce_only=True)
                 s_avg_for_msg = st.session_state[f"{state_prefix}s_avg_price"]
@@ -794,7 +826,7 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"🔴 *[{mode_tag}] SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {s_avg_for_msg:.2f}\nKapanış: {current_price:.2f}\nKapatılan Miktar: {s_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nK/Z: {s_pnl_usd:+.2f} USDT ({pnl*100:+.2f}%){order_note}"
+                msg = f"🔴 *[{mode_tag}] SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {s_avg_for_msg:.2f}\nKapanış: {current_price:.2f}\nKapatılan Miktar: {s_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nATR Mesafe: {ATR_SL_MULT}x{atr_k3:.2f}\nK/Z: {s_pnl_usd:+.2f} USDT ({pnl*100:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
@@ -810,7 +842,7 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"🟢 *[{mode_tag}] SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {s_avg_for_msg:.2f}\nKapanış: {current_price:.2f}\nKapatılan Miktar: {s_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nK/Z: {s_pnl_usd:+.2f} USDT ({pnl*100:+.2f}%){order_note}"
+                msg = f"🟢 *[{mode_tag}] SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {s_avg_for_msg:.2f}\nKapanış: {current_price:.2f}\nKapatılan Miktar: {s_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nATR Mesafe: {ATR_TP_MULT}x{atr_k3:.2f}\nK/Z: {s_pnl_usd:+.2f} USDT ({pnl*100:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
@@ -901,6 +933,7 @@ def live_dca_fragment():
 
             st.markdown("---")
             st.write("🎯 **Canlı Sinyal DCA Yönetim Kartı**")
+            st.caption(f"Kar-Al: {ATR_TP_MULT}x ATR · Stop-Loss: {ATR_SL_MULT}x ATR (Kademe 3 zaman dilimi, ATR: {atr_k3:.2f})")
             col_l, col_s = st.columns(2)
             with col_l:
                 st.info("📈 LONG KADEMELERİ")
@@ -909,7 +942,10 @@ def live_dca_fragment():
                 k3_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_4h:.2f})"
                 st.write(f"**{l1_lbl}:** {k1_status}"); st.write(f"**{l2_lbl}:** {k2_status}"); st.write(f"**{l3_lbl}:** {k3_status}")
                 if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
-                    st.success(f"🟢 **KAR-AL (%1):** `{st.session_state[f'{state_prefix}l_avg_price'] * 1.01:.2f}`")
+                    l_avg_disp = st.session_state[f'{state_prefix}l_avg_price']
+                    st.success(f"🟢 **KAR-AL:** `{l_avg_disp + (ATR_TP_MULT * atr_k3):.2f}`")
+                    if st.session_state[f"{state_prefix}l_status"][2]:
+                        st.error(f"🔴 **STOP-LOSS:** `{l_avg_disp - (ATR_SL_MULT * atr_k3):.2f}`")
 
             with col_s:
                 st.error("📉 SHORT KADEMELERİ")
@@ -918,7 +954,10 @@ def live_dca_fragment():
                 s_k3_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_4h:.2f})"
                 st.write(f"**{s1_lbl}:** {s_k1_status}"); st.write(f"**{s2_lbl}:** {s_k2_status}"); st.write(f"**{s3_lbl}:** {s_k3_status}")
                 if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
-                    st.success(f"🟢 **KAR-AL (%1):** `{st.session_state[f'{state_prefix}s_avg_price'] * 0.99:.2f}`")
+                    s_avg_disp = st.session_state[f'{state_prefix}s_avg_price']
+                    st.success(f"🟢 **KAR-AL:** `{s_avg_disp - (ATR_TP_MULT * atr_k3):.2f}`")
+                    if st.session_state[f"{state_prefix}s_status"][2]:
+                        st.error(f"🔴 **STOP-LOSS:** `{s_avg_disp + (ATR_SL_MULT * atr_k3):.2f}`")
 
             st.markdown("---")
             st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
