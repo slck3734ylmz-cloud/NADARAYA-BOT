@@ -194,6 +194,16 @@ def get_btc_funding_rate():
 
 @st.cache_data(ttl=300)
 def estimate_liquidation_pools(symbol):
+    """
+    NOT: MEXC ve genel olarak borsalar, piyasa-geneli gerçek likidasyon/açık pozisyon
+    verisini herkese açık API üzerinden sunmuyor (sadece kullanıcının kendi pozisyonu
+    görülebilir). Bu fonksiyon bu yüzden TAHMİNİ bir yöntem kullanır: son 72 saatin
+    her mumunun en düşük/en yüksek noktasından, piyasada yaygın kullanılan kaldıraç
+    seviyelerine (10x, 25x, 50x, 100x) göre olası likidasyon fiyatlarını hesaplar.
+    Birden fazla kaldıraç seviyesinin ve yüksek hacmin ÇAKIŞTIĞI fiyat noktaları
+    "yoğun" kabul edilir - bu, gerçek likidasyon kümelenmesinin olası göstergesidir,
+    ama kesin/gerçek veri değildir.
+    """
     try:
         raw_3d = exchange.fetch_ohlcv(symbol, "1h", limit=72)
         df_3d = pd.DataFrame(raw_3d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
@@ -202,20 +212,60 @@ def estimate_liquidation_pools(symbol):
         volumes = df_3d["Hacim"].values
         current_p = df_3d.iloc[-1]["Kapanis"]
         round_step = 50.0 if current_p > 10000 else (1.0 if current_p > 100 else (0.1 if current_p > 1 else 0.01))
-        long_l, short_l = {}, {}
-        for i, row in df_3d.iterrows():
-            for m in [0.99, 0.98, 0.96]:
-                p = round((lows[i] * m) / round_step) * round_step
-                long_l[p] = long_l.get(p, 0.0) + volumes[i]
-            for m in [1.01, 1.02, 1.04]:
-                p = round((highs[i] * m) / round_step) * round_step
-                short_l[p] = short_l.get(p, 0.0) + volumes[i]
-        sl, ss = sorted(long_l.items(), key=lambda x: x[1], reverse=True)[:3], sorted(short_l.items(), key=lambda x: x[1], reverse=True)[:3]
+
+        # Yaygın kaldıraç seviyeleri ve bunlara karşılık gelen yaklaşık likidasyon
+        # mesafesi (maintenance margin oranına göre kabaca): 10x->%5, 25x->%2, 50x->%1, 100x->%0.5
+        leverage_levels = {10: 0.05, 25: 0.02, 50: 0.01, 100: 0.005}
+
+        long_pools, short_pools = {}, {}
+        for i in range(len(df_3d)):
+            for lev, pct in leverage_levels.items():
+                p_long = round((lows[i] * (1 - pct)) / round_step) * round_step
+                if p_long not in long_pools:
+                    long_pools[p_long] = {"volume": 0.0, "leverages": set()}
+                long_pools[p_long]["volume"] += volumes[i]
+                long_pools[p_long]["leverages"].add(lev)
+
+                p_short = round((highs[i] * (1 + pct)) / round_step) * round_step
+                if p_short not in short_pools:
+                    short_pools[p_short] = {"volume": 0.0, "leverages": set()}
+                short_pools[p_short]["volume"] += volumes[i]
+                short_pools[p_short]["leverages"].add(lev)
+
+        # Yoğunluk skoru: hacim VE çakışan kaldıraç seviyesi sayısı birlikte değerlendirilir.
+        def score(pool_data):
+            return pool_data["volume"] * len(pool_data["leverages"])
+
+        sl = sorted(long_pools.items(), key=lambda x: score(x[1]), reverse=True)[:4]
+        ss = sorted(short_pools.items(), key=lambda x: score(x[1]), reverse=True)[:4]
         sl.sort(key=lambda x: x[0], reverse=True)
         ss.sort(key=lambda x: x[0], reverse=False)
+
+        avg_vol = df_3d["Hacim"].mean()
+
+        def yogunluk_etiketi(pool_data):
+            n_lev = len(pool_data["leverages"])
+            yuksek_hacim = pool_data["volume"] > avg_vol * 1.5
+            if n_lev >= 3 and yuksek_hacim:
+                return "🔴🔴🔴 ÇOK YÜKSEK"
+            elif n_lev >= 2 or yuksek_hacim:
+                return "🔴🔴 YÜKSEK"
+            else:
+                return "🔴 ORTA"
+
+        def yogunluk_etiketi_short(pool_data):
+            n_lev = len(pool_data["leverages"])
+            yuksek_hacim = pool_data["volume"] > avg_vol * 1.5
+            if n_lev >= 3 and yuksek_hacim:
+                return "🟢🟢🟢 ÇOK YÜKSEK"
+            elif n_lev >= 2 or yuksek_hacim:
+                return "🟢🟢 YÜKSEK"
+            else:
+                return "🟢 ORTA"
+
         return (
-            pd.DataFrame([{"Likidasyon Fiyatı": f"${p:,.2f}", "Yoğunluk Derecesi": "🔴🔴🔴 YÜKSEK" if v > df_3d["Hacim"].mean()*1.5 else "🔴🔴 ORTA"} for p, v in sl]),
-            pd.DataFrame([{"Likidasyon Fiyatı": f"${p:,.2f}", "Yoğunluk Derecesi": "🟢🟢🟢 YÜKSEK" if v > df_3d["Hacim"].mean()*1.5 else "🟢🟢 ORTA"} for p, v in ss])
+            pd.DataFrame([{"Likidasyon Fiyatı": f"${p:,.2f}", "Çakışan Kaldıraç": "/".join(f"{l}x" for l in sorted(d["leverages"])), "Yoğunluk": yogunluk_etiketi(d)} for p, d in sl]),
+            pd.DataFrame([{"Likidasyon Fiyatı": f"${p:,.2f}", "Çakışan Kaldıraç": "/".join(f"{l}x" for l in sorted(d["leverages"])), "Yoğunluk": yogunluk_etiketi_short(d)} for p, d in ss])
         )
     except:
         return pd.DataFrame(), pd.DataFrame()
@@ -872,6 +922,7 @@ def live_dca_fragment():
 
             st.markdown("---")
             st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
+            st.caption("⚠️ Gerçek borsa likidasyon verisi değildir. Son 72 saatin mum verisine göre, yaygın kaldıraç seviyelerinin (10x/25x/50x/100x) çakıştığı olası yoğunlaşma noktalarının tahminidir.")
             col_liq_l, col_liq_s = st.columns(2)
             with col_liq_l:
                 st.info("🔴 LONG LİKİDASYON HAVUZLARI")
