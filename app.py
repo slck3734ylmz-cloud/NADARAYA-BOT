@@ -268,16 +268,16 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
 
 # Global veriler
 extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
-top_50_data = get_top_50_volume_coins()
 
 # ================= YAN PANEL AYARLARI VE NAVİGASYON =================
 st.sidebar.title("💳 Cüzdan Durumu")
 st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
 
-selected_display = st.sidebar.selectbox("🔥 Vadeli Coin Seçin", [x['display'] for x in top_50_data], key="sidebar_coin_selectbox_global")
-selected_symbol = [x['symbol'] for x in top_50_data if x['display'] == selected_display][0]
+# Bot sadece BTC/USDT futures üzerinde sabit çalışır (coin seçimi kaldırıldı).
+selected_symbol = "BTC/USDT:USDT"
 coin_title = selected_symbol.split(':')[0]
 state_prefix = f"{selected_symbol}_"
+st.sidebar.markdown(f"🔥 **Sabit İşlem Çifti:** `{coin_title}`")
 
 # ================= YAN PANEL FONLAMA ORANLARI YAZDIRMA =================
 st.sidebar.markdown("---")
