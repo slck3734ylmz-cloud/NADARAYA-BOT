@@ -257,20 +257,25 @@ def get_btc_funding_rate():
         return {"error": f"{type(e).__name__}: {str(e)[:150]}"}
 
 @st.cache_data(ttl=300)
-def estimate_liquidation_pools(symbol):
+def estimate_liquidation_pools(symbol, is_volatile=False):
     """
     NOT: MEXC ve genel olarak borsalar, piyasa-geneli gerçek likidasyon/açık pozisyon
     verisini herkese açık API üzerinden sunmuyor (sadece kullanıcının kendi pozisyonu
-    görülebilir). Bu fonksiyon bu yüzden TAHMİNİ bir yöntem kullanır: son 72 saatin
-    her mumunun en düşük/en yüksek noktasından, piyasada yaygın kullanılan kaldıraç
+    görülebilir). Bu fonksiyon bu yüzden TAHMİNİ bir yöntem kullanır: geçmiş mumların
+    her birinin en düşük/en yüksek noktasından, piyasada yaygın kullanılan kaldıraç
     seviyelerine (10x, 25x, 50x, 100x) göre olası likidasyon fiyatlarını hesaplar.
     Birden fazla kaldıraç seviyesinin ve yüksek hacmin ÇAKIŞTIĞI fiyat noktaları
     "yoğun" kabul edilir - bu, gerçek likidasyon kümelenmesinin olası göstergesidir,
     ama kesin/gerçek veri değildir.
+
+    Geriye bakış penceresi piyasa durumuna göre dinamiktir: sakin piyasada 3 gün
+    (72x 1h mum), volatil piyasada 7 gün (168x 1h mum) - kademe sisteminin volatil
+    modda daha uzun zaman dilimlerine (1d) kadar çıkmasıyla tutarlı olması için.
     """
     try:
-        raw_3d = exchange.fetch_ohlcv(symbol, "1h", limit=72)
-        df_3d = pd.DataFrame(raw_3d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        lookback_hours = 168 if is_volatile else 72  # 7 gün : 3 gün
+        raw_lb = exchange.fetch_ohlcv(symbol, "1h", limit=lookback_hours)
+        df_3d = pd.DataFrame(raw_lb, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         highs = df_3d["Yuksek"].values
         lows = df_3d["Dusuk"].values
         volumes = df_3d["Hacim"].values
@@ -737,7 +742,7 @@ def live_dca_fragment():
         df_1d["RSI"] = calculate_rsi(df_1d["Kapanis"], period=p1d["rsi_period"])
         df_1d["ATR"] = calculate_atr(df_1d, period=14)
 
-        df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
+        df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol, is_volatile=is_volatile)
 
         # =================== DİNAMİK KADEME SİSTEMİ (Volatilite Bazlı) ===================
         # Yatay (sakin) piyasa : Kademe 1=1m, Kademe 2=5m, Kademe 3=15m
@@ -1009,8 +1014,9 @@ def live_dca_fragment():
                         st.error(f"🔴 **STOP-LOSS:** `{s_avg_disp + (ATR_SL_MULT * atr_k3):.2f}`")
 
             st.markdown("---")
-            st.subheader(f"🎯 3 Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
-            st.caption("⚠️ Gerçek borsa likidasyon verisi değildir. Son 72 saatin mum verisine göre, yaygın kaldıraç seviyelerinin (10x/25x/50x/100x) çakıştığı olası yoğunlaşma noktalarının tahminidir.")
+            liq_days = 7 if is_volatile else 3
+            st.subheader(f"🎯 {liq_days} Günlük {selected_symbol.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
+            st.caption(f"⚠️ Gerçek borsa likidasyon verisi değildir. Son {liq_days * 24} saatin mum verisine göre, yaygın kaldıraç seviyelerinin (10x/25x/50x/100x) çakıştığı olası yoğunlaşma noktalarının tahminidir.")
             col_liq_l, col_liq_s = st.columns(2)
             with col_liq_l:
                 st.info("🔴 LONG LİKİDASYON HAVUZLARI")
