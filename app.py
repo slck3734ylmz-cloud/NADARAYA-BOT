@@ -214,22 +214,24 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
         y=last_price, line=dict(color='rgba(255,255,255,0.35)', width=1, dash='dot'),
         annotation_text=f" {last_price:,.2f} ", annotation_position="right",
         annotation_font=dict(color='#0B0E11', size=11, family="Arial Black"),
-        annotation_bgcolor='#F0B90B', annotation_borderpad=4
+        annotation_bgcolor='#F0B90B', annotation_borderpad=3,
+        annotation_xshift=38
     )
 
     fig.update_layout(
-        title=dict(text=f"<b>{title}</b>", font=dict(size=15, color='#E8EAED', family="Arial"), x=0.01, xanchor='left'),
+        title=dict(text=f"<b>{title}</b>", font=dict(size=15, color='#E8EAED', family="Arial"), x=0.01, xanchor='left', y=0.99, yanchor='top'),
         template="plotly_dark",
         plot_bgcolor='#0B0E11',
         paper_bgcolor='#0B0E11',
         font=dict(color='#B7BDC6', family="Arial"),
-        margin=dict(l=10, r=60, t=45, b=10),
-        height=440,
+        margin=dict(l=10, r=85, t=85, b=10),
+        height=460,
+        bargap=0.25,
         xaxis_rangeslider_visible=False,
         hovermode="x unified",
         hoverlabel=dict(bgcolor='#1E2329', font_size=12, font_family="Arial", bordercolor='#2B3139'),
         legend=dict(
-            orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0.0,
+            orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0.0,
             bgcolor='rgba(0,0,0,0)', font=dict(size=11, color='#B7BDC6')
         ),
         dragmode='pan'
@@ -239,13 +241,16 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
         showgrid=True, gridcolor='rgba(240, 185, 11, 0.06)', gridwidth=1,
         showline=True, linewidth=1, linecolor='#2B3139', mirror=True,
         rangeslider_visible=False, showspikes=True, spikecolor='#F0B90B',
-        spikethickness=1, spikedash='dot', spikemode='across'
+        spikethickness=1, spikedash='dot', spikemode='across',
+        tickfont=dict(color='#9098A1', size=11)
     )
     fig.update_yaxes(
         showgrid=True, gridcolor='rgba(240, 185, 11, 0.06)', gridwidth=1,
         showline=True, linewidth=1, linecolor='#2B3139', mirror=True,
         side='right', showspikes=True, spikecolor='#F0B90B',
-        spikethickness=1, spikedash='dot'
+        spikethickness=1, spikedash='dot',
+        tickfont=dict(color='#D1D4DC', size=12),
+        automargin=True
     )
 
     return fig
