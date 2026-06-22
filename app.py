@@ -591,8 +591,6 @@ def live_dca_fragment():
         else:
             st.session_state[f"{state_prefix}locked_prices"] = None
 
-        rsi_1m_val, rsi_5m_val, rsi_15m_val, rsi_1h_val, rsi_4h_val, rsi_1d_val = df_1m.iloc[-1]["RSI"], df_5m.iloc[-1]["RSI"], df_15m.iloc[-1]["RSI"], df_1h.iloc[-1]["RSI"], df_4h.iloc[-1]["RSI"], df_1d.iloc[-1]["RSI"]
-
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
             l_tp = st.session_state[f"{state_prefix}l_avg_price"] * (1 + target_profit_ratio)
             if st.session_state[f"{state_prefix}l_status"][2] and current_price <= (nw_alt_4h * (1 - stop_loss_ratio)):
@@ -795,19 +793,6 @@ def live_dca_fragment():
             if trend_4h == "YUKARI (BOĞA)": st.success(f"🛡️ Emniyet: {warning_msg}")
             else: st.error(f"🛡️ Emniyet: {warning_msg}")
         
-            st.markdown("---")
-            st.write("⚡ **RSI & Momentum Süzgeci (Tüm Zaman Dilimleri)**")
-            col_rsi_a, col_rsi_b, col_rsi_c = st.columns(3)
-            with col_rsi_a:
-                st.write("**1m (Skalp)**"); st.code(f"{rsi_1m_val:.1f}")
-                st.write("**1h (Orta)**"); st.code(f"{rsi_1h_val:.1f}")
-            with col_rsi_b:
-                st.write("**5m (Hızlı)**"); st.code(f"{rsi_5m_val:.1f}")
-                st.write("**4h (Makro)**"); st.code(f"{rsi_4h_val:.1f}")
-            with col_rsi_c:
-                st.write("**15m (Normal)**"); st.code(f"{rsi_15m_val:.1f}")
-                st.write("**1d (Ana Trend)**"); st.code(f"{rsi_1d_val:.1f}")
-
             st.markdown("---")
             st.write(f"🎯 **Aktif Kademe RSI Filtreleri** ({active_engine_name})")
             st.caption(f"LONG onayı için RSI < {RSI_OVERSOLD}, SHORT onayı için RSI > {RSI_OVERBOUGHT} olmalı.")
