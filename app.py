@@ -45,6 +45,19 @@ TF_PARAMS = {
     "1d":  {"limit": 60,  "h": 6, "rsi_period": 14, "std_window": 14},
 }
 
+# Plotly grafiklerinin üst araç çubuğunu (modebar) sadeleştirir - sadece zoom/pan/reset
+# gibi gerçekten kullanışlı araçlar kalır, çizim/açıklama gibi gereksiz butonlar kaldırılır.
+# scrollZoom: fare tekerleğiyle yakınlaştırma açar (TradingView/Binance tarzı deneyim).
+PLOTLY_CONFIG = {
+    "displaylogo": False,
+    "scrollZoom": True,
+    "modeBarButtonsToRemove": [
+        "select2d", "lasso2d", "autoScale2d", "hoverClosestCartesian",
+        "hoverCompareCartesian", "toggleSpikelines"
+    ],
+    "displayModeBar": True,
+}
+
 # ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
 def check_password():
     if "password_correct" not in st.session_state:
@@ -64,6 +77,15 @@ def check_password():
         div[data-testid="stVerticalBlockBorderWrapper"]:has(div[data-testid="stForm"]) {
             max-width: 380px;
             margin: 0 auto;
+        }
+        /* Streamlit'in form içi otomatik "Press Enter to submit form" ipucu yazısını gizler -
+           bu yazı şifre kutusunun içindeki gözle-göster ve kilit ikonlarıyla çakışıyordu. */
+        div[data-testid="stForm"] div[data-testid="InputInstructions"] {
+            display: none !important;
+        }
+        /* Şifre kutusunun sağındaki ikonlara (göster/gizle) yer açmak için iç boşluk artırılır */
+        div[data-testid="stForm"] input[type="password"] {
+            padding-right: 2.6rem !important;
         }
         </style>
         <div style="display:flex; align-items:center; justify-content:center; padding:2.5rem 0 1rem; font-family: -apple-system, sans-serif;">
@@ -423,21 +445,25 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
             orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0.0,
             bgcolor='rgba(0,0,0,0)', font=dict(size=11, color='#B7BDC6')
         ),
-        dragmode='pan'
+        dragmode='pan',
+        spikedistance=-1,
+        hoverdistance=100
     )
 
     fig.update_xaxes(
         showgrid=True, gridcolor='rgba(240, 185, 11, 0.06)', gridwidth=1,
         showline=True, linewidth=1, linecolor='#2B3139', mirror=True,
         rangeslider_visible=False, showspikes=True, spikecolor='#F0B90B',
-        spikethickness=1, spikedash='dot', spikemode='across',
-        tickfont=dict(color='#9098A1', size=11)
+        spikethickness=1, spikedash='solid', spikemode='across', spikesnap='cursor',
+        tickfont=dict(color='#9098A1', size=11),
+        # İmlecin hizasındaki zaman değerini eksen üzerinde altın renkli etiket olarak gösterir
+        showticklabels=True
     )
     fig.update_yaxes(
         showgrid=True, gridcolor='rgba(240, 185, 11, 0.06)', gridwidth=1,
         showline=True, linewidth=1, linecolor='#2B3139', mirror=True,
         side='right', showspikes=True, spikecolor='#F0B90B',
-        spikethickness=1, spikedash='dot',
+        spikethickness=1, spikedash='solid', spikemode='across', spikesnap='cursor',
         tickfont=dict(color='#D1D4DC', size=12),
         automargin=True
     )
@@ -447,6 +473,9 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
 # ================= YAN PANEL AYARLARI VE NAVİGASYON =================
 st.sidebar.markdown("## 🐑 Kyoun")
 st.sidebar.caption("BTC/USDT Futures Hedging Terminal")
+if st.sidebar.button("🚪 Çıkış Yap", key="logout_button_global", use_container_width=True):
+    st.session_state.password_correct = False
+    st.rerun()
 st.sidebar.markdown("---")
 st.sidebar.subheader("💳 Cüzdan Durumu")
 
@@ -966,22 +995,22 @@ def live_dca_fragment():
         
             with tab_1m:
                 df_subset = df_1m.tail(TF_PARAMS["1m"]["limit"])
-                st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_1m")
+                st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_1m", config=PLOTLY_CONFIG)
             with tab_5m:
                 df_subset = df_5m.tail(TF_PARAMS["5m"]["limit"])
-                st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_5m")
+                st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_5m", config=PLOTLY_CONFIG)
             with tab_15m:
                 df_subset = df_15m.tail(TF_PARAMS["15m"]["limit"])
-                st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_15m")
+                st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_15m", config=PLOTLY_CONFIG)
             with tab_1h:
                 df_subset = df_1h.tail(TF_PARAMS["1h"]["limit"])
-                st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_1h")
+                st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_1h", config=PLOTLY_CONFIG)
             with tab_4h:
                 df_subset = df_4h.tail(TF_PARAMS["4h"]["limit"])
-                st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_4h")
+                st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_4h", config=PLOTLY_CONFIG)
             with tab_1d:
                 df_subset = df_1d.tail(TF_PARAMS["1d"]["limit"])
-                st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key=f"{state_prefix}chart_1d")
+                st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key=f"{state_prefix}chart_1d", config=PLOTLY_CONFIG)
 
             st.markdown("---")
             st.write("🎯 **Canlı Sinyal DCA Yönetim Kartı**")
