@@ -436,8 +436,10 @@ selected_symbol = "BTC/USDT:USDT"
 coin_title = selected_symbol.split(':')[0]
 state_prefix = f"{selected_symbol}_"
 
+# Bakiye göstergesi canlı sisteme bağlanmıştır, işlemler kapandıkça güncellenir.
 col_s1, col_s2 = st.sidebar.columns(2)
-col_s1.metric("Bakiye", "$100.00")
+virtual_bal = st.session_state.get(f"{state_prefix}balance_usd", 100.0)
+col_s1.metric("Bakiye", f"${virtual_bal:,.2f}")
 col_s2.metric("Kaldıraç", f"{BOT_LEVERAGE}x")
 st.sidebar.caption(f"🔥 {coin_title} · Cross Margin")
 
@@ -520,7 +522,9 @@ if f"{state_prefix}balance_usd" not in st.session_state:
                 0.0
             ]
 
-            # Veritabanında gömülü olan 4. Kademe (K4) durumlarını geri yükleme
+            # K4 verilerini ve kilitli karşıt bant fiyatlarını veritabanından çözümleme
+            l_tp_target_db = 0.0
+            s_tp_target_db = 0.0
             for x in raw_history:
                 if x.startswith("STATE_K4:"):
                     try:
@@ -529,6 +533,8 @@ if f"{state_prefix}balance_usd" not in st.session_state:
                         s_status_db[3] = k4_data.get("s_status_3", False)
                         l_entry_db[3] = k4_data.get("l_entry_3", 0.0)
                         s_entry_db[3] = k4_data.get("s_entry_3", 0.0)
+                        l_tp_target_db = k4_data.get("l_tp_target", 0.0)
+                        s_tp_target_db = k4_data.get("s_tp_target", 0.0)
                     except:
                         pass
 
@@ -536,6 +542,8 @@ if f"{state_prefix}balance_usd" not in st.session_state:
             st.session_state[f"{state_prefix}s_status"] = s_status_db
             st.session_state[f"{state_prefix}l_entry_prices"] = l_entry_db
             st.session_state[f"{state_prefix}s_entry_prices"] = s_entry_db
+            st.session_state[f"{state_prefix}l_tp_target"] = l_tp_target_db
+            st.session_state[f"{state_prefix}s_tp_target"] = s_tp_target_db
             loaded_from_db = True
     except:
         pass
@@ -552,12 +560,12 @@ if f"{state_prefix}balance_usd" not in st.session_state:
         st.session_state[f"{state_prefix}s_crypto"] = 0.0
         st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
         st.session_state[f"{state_prefix}s_avg_price"] = 0.0
+        st.session_state[f"{state_prefix}l_tp_target"] = 0.0
+        st.session_state[f"{state_prefix}s_tp_target"] = 0.0
         st.session_state[f"{state_prefix}log_history"] = []
         st.session_state[f"{state_prefix}trade_history"] = []
 
 # --- INDEXERROR ÖNLEYİCİ GEÇİŞ SİGORTASI ---
-# Eğer tarayıcıda veya sunucuda eski 3 kademeli oturum kalıntıları varsa, 
-# bunları güvenli bir şekilde 4 kademeye otomatik olarak yükseltir.
 for key, fill_val in [
     (f"{state_prefix}l_status", False),
     (f"{state_prefix}s_status", False),
@@ -568,6 +576,11 @@ for key, fill_val in [
         if len(st.session_state[key]) < 4:
             st.session_state[key] = list(st.session_state[key]) + [fill_val] * (4 - len(st.session_state[key]))
 
+if f"{state_prefix}l_tp_target" not in st.session_state:
+    st.session_state[f"{state_prefix}l_tp_target"] = 0.0
+if f"{state_prefix}s_tp_target" not in st.session_state:
+    st.session_state[f"{state_prefix}s_tp_target"] = 0.0
+
 if f"{state_prefix}locked_prices" not in st.session_state: 
     st.session_state[f"{state_prefix}locked_prices"] = None
 
@@ -575,12 +588,14 @@ def save_state_to_db():
     try:
         serialized_trades = [f"STRUCT_TRADE:{json.dumps(t)}" for t in st.session_state[f"{state_prefix}trade_history"]]
         
-        # 4. Kademe (K4) verilerini veritabanına gömme
+        # 4. Kademe (K4) ve Kilitli Karşıt Bant Kâr Hedefleri veritabanına gömülür
         k4_state_dict = {
             "l_status_3": st.session_state[f"{state_prefix}l_status"][3],
             "s_status_3": st.session_state[f"{state_prefix}s_status"][3],
             "l_entry_3": st.session_state[f"{state_prefix}l_entry_prices"][3],
-            "s_entry_3": st.session_state[f"{state_prefix}s_entry_prices"][3]
+            "s_entry_3": st.session_state[f"{state_prefix}s_entry_prices"][3],
+            "l_tp_target": st.session_state.get(f"{state_prefix}l_tp_target", 0.0),
+            "s_tp_target": st.session_state.get(f"{state_prefix}s_tp_target", 0.0)
         }
         serialized_k4 = f"STATE_K4:{json.dumps(k4_state_dict)}"
         
@@ -684,6 +699,8 @@ if col_b2.button("🔴 Sıfırla", key="live_reset_all_positions_button", use_co
     st.session_state[f"{state_prefix}balance_usd"] = 100.0
     st.session_state[f"{state_prefix}locked_prices"] = None
     st.session_state[f"{state_prefix}trade_history"] = []
+    st.session_state[f"{state_prefix}l_tp_target"] = 0.0
+    st.session_state[f"{state_prefix}s_tp_target"] = 0.0
     save_state_to_db()
     st.rerun()
 
@@ -800,7 +817,6 @@ def live_dca_fragment():
         rsi_k3_prev = df_k3.iloc[-3]["RSI"]
         rsi_k4_prev = df_k4.iloc[-3]["RSI"]
         
-        # Kar al ve Stop Loss mesafeleri en son kademenin (K4) zaman dilimine (ATR) devredildi
         atr_k4 = df_k4.iloc[-2]["ATR"]
         ATR_TP_MULT, ATR_SL_MULT = 1.0, 1.5
 
@@ -849,10 +865,20 @@ def live_dca_fragment():
 
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
             l_avg_price = st.session_state[f"{state_prefix}l_avg_price"]
-            l_tp = l_avg_price + atr_tp_distance
+            
+            # --- KÂR KORUMA VE ZARAR ENGELLEME SİGORTASI (LONG) ---
+            l_tp_floor = l_avg_price + min_tp_distance
+            if not is_volatile:
+                l_tp_raw = st.session_state.get(f"{state_prefix}l_tp_target", l_tp_floor)
+                # Karşıt üst bant fiyatı eğer ortalama maliyetimizin (ve komisyonun) altına kaymışsa,
+                # sistem kâr-al noktasını otomatik olarak kayıpsız olan güvenlik tabanına (l_tp_floor) sabitler.
+                l_tp = max(l_tp_raw, l_tp_floor)
+            else:
+                l_tp = l_avg_price + atr_tp_distance
+                
             l_sl = l_avg_price - (ATR_SL_MULT * atr_k4)
             
-            # --- LONG STOP-LOSS TETİKLENME BLOKU (K4 Aktif Şartlı) ---
+            # --- LONG STOP-LOSS (Sadece Son Kademe - K4 Alındıysa Çalışır) ---
             if st.session_state[f"{state_prefix}l_status"][3] and current_price <= l_sl:
                 order_result = place_futures_order(selected_symbol, "sell", st.session_state[f"{state_prefix}l_crypto"], is_live=live_trading_enabled, reduce_only=True)
                 l_avg_for_msg = st.session_state[f"{state_prefix}l_avg_price"]
@@ -881,6 +907,7 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
                 st.session_state[f"{state_prefix}l_status"] = [False, False, False, False]
                 st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0, 0.0]
+                st.session_state[f"{state_prefix}l_tp_target"] = 0.0
                 save_state_to_db()
                 
             # --- LONG KAR-AL TETİKLENME BLOKU ---
@@ -912,13 +939,27 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
                 st.session_state[f"{state_prefix}l_status"] = [False, False, False, False]
                 st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0, 0.0]
+                st.session_state[f"{state_prefix}l_tp_target"] = 0.0
                 save_state_to_db()
 
 
         if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
             s_avg_price = st.session_state[f"{state_prefix}s_avg_price"]
+            
+            # --- KÂR KORUMA VE ZARAR ENGELLEME SİGORTASI (SHORT) ---
+            s_tp_ceiling = s_avg_price - min_tp_distance
+            if not is_volatile:
+                s_tp_raw = st.session_state.get(f"{state_prefix}s_tp_target", s_tp_ceiling)
+                if s_tp_raw == 0.0:
+                    s_tp = s_tp_ceiling
+                else:
+                    # Karşıt alt bant fiyatı eğer ortalama maliyetimizin (ve komisyonun) üstüne kaymışsa,
+                    # sistem kâr-al noktasını otomatik olarak kayıpsız olan güvenlik tavanına (s_tp_ceiling) sabitler.
+                    s_tp = min(s_tp_raw, s_tp_ceiling)
+            else:
+                s_tp = s_avg_price - atr_tp_distance
+
             s_stop = s_avg_price + (ATR_SL_MULT * atr_k4)
-            s_tp = s_avg_price - atr_tp_distance
             
             # --- SHORT STOP-LOSS (Sadece Son Kademe - K4 Alındıysa Çalışır) ---
             if st.session_state[f"{state_prefix}s_status"][3] and current_price >= s_stop:
@@ -949,6 +990,7 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
                 st.session_state[f"{state_prefix}s_status"] = [False, False, False, False]
                 st.session_state[f"{state_prefix}s_entry_prices"] = [0.0, 0.0, 0.0, 0.0]
+                st.session_state[f"{state_prefix}s_tp_target"] = 0.0
                 save_state_to_db()
                 
             # --- SHORT KAR-AL TETİKLENME BLOKU ---
@@ -961,11 +1003,10 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"🟢 *[{mode_tag}] SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {s_avg_for_msg:.2f}\nKapanış: {current_price:.2f}\nKapatılan Miktar: {s_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nKar-Al Mesafesi: {atr_tp_distance:.2f}\nK/Z: {s_pnl_usd:+.2f} USDT ({pnl*100:+.2f}%){order_note}"
+                msg = f"🟢 *[{mode_tag}] SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {s_avg_for_msg:.2f}\nKapanış: {current_price:.2f}\nKapatılan Miktar: {s_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nKar-Al Seviyesi: {s_tp:.2f}\nK/Z: {s_pnl_usd:+.2f} USDT ({pnl*100:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 
-                # İşlem geçmişini (trade_history) kütüphaneye kaydetme
                 trade_record = {
                     "exit_time": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     "type": "SHORT",
@@ -981,6 +1022,7 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
                 st.session_state[f"{state_prefix}s_status"] = [False, False, False, False]
                 st.session_state[f"{state_prefix}s_entry_prices"] = [0.0, 0.0, 0.0, 0.0]
+                st.session_state[f"{state_prefix}s_tp_target"] = 0.0
                 save_state_to_db()
 
         rsi_per_kademe = [rsi_k1, rsi_k2, rsi_k3, rsi_k4]
@@ -1006,6 +1048,13 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}l_status"][idx] = True
                 st.session_state[f"{state_prefix}l_entry_prices"][idx] = current_price
                 st.session_state[f"{state_prefix}l_avg_price"] = st.session_state[f"{state_prefix}l_usd_spent"] / st.session_state[f"{state_prefix}l_crypto"]
+                
+                # SAKİN PİYASADA: Karşıt Üst Band fiyatı kâr-al hedefi olarak kilitlenir.
+                # Alım yapılan kademenin (idx) zaman dilimine ait üst bandı sabit hedef olarak kaydedilir.
+                if not is_volatile:
+                    ust_bands = [raw_k1_ust, raw_k2_ust, raw_k3_ust, raw_k4_ust]
+                    st.session_state[f"{state_prefix}l_tp_target"] = ust_bands[idx]
+                
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
                 div_note = "\n🔁 Bullish Iraksama: ✅ (ekstra güven sinyali)" if div_bull else ""
@@ -1035,6 +1084,13 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}s_status"][idx] = True
                 st.session_state[f"{state_prefix}s_entry_prices"][idx] = current_price
                 st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
+                
+                # SAKİN PİYASADA: Karşıt Alt Band fiyatı kâr-al hedefi olarak kilitlenir.
+                # Alım yapılan kademenin (idx) zaman dilimine ait alt bandı sabit hedef olarak kaydedilir.
+                if not is_volatile:
+                    alt_bands = [raw_k1_alt, raw_k2_alt, raw_k3_alt, raw_k4_alt]
+                    st.session_state[f"{state_prefix}s_tp_target"] = alt_bands[idx]
+                
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
                 div_note = "\n🔁 Bearish Iraksama: ✅ (ekstra güven sinyali)" if div_bear else ""
@@ -1089,7 +1145,17 @@ def live_dca_fragment():
                 st.write(f"**{l4_lbl}:** {k4_status}")
                 if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                     l_avg_disp = st.session_state[f'{state_prefix}l_avg_price']
-                    st.success(f"🟢 **KAR-AL:** `{l_avg_disp + atr_tp_distance:.2f}`")
+                    
+                    if not is_volatile:
+                        l_tp_raw_calc = st.session_state.get(f"{state_prefix}l_tp_target", 0.0)
+                        l_tp_floor_calc = l_avg_disp + min_tp_distance
+                        l_tp_disp = max(l_tp_raw_calc, l_tp_floor_calc)
+                        tp_label = "ÜST BAND" if l_tp_raw_calc >= l_tp_floor_calc else "GÜVENLİK DUVARI"
+                    else:
+                        l_tp_disp = l_avg_disp + atr_tp_distance
+                        tp_label = "ATR"
+                        
+                    st.success(f"🟢 **KAR-AL ({tp_label}):** `{l_tp_disp:.2f}`")
                     if st.session_state[f"{state_prefix}l_status"][3]:
                         st.error(f"🔴 **STOP-LOSS:** `{l_avg_disp - (ATR_SL_MULT * atr_k4):.2f}`")
 
@@ -1105,7 +1171,20 @@ def live_dca_fragment():
                 st.write(f"**{s4_lbl}:** {s_k4_status}")
                 if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                     s_avg_disp = st.session_state[f'{state_prefix}s_avg_price']
-                    st.success(f"🟢 **KAR-AL:** `{s_avg_disp - atr_tp_distance:.2f}`")
+                    
+                    if not is_volatile:
+                        s_tp_raw_calc = st.session_state.get(f"{state_prefix}s_tp_target", 0.0)
+                        s_tp_ceiling_calc = s_avg_disp - min_tp_distance
+                        if s_tp_raw_calc == 0.0:
+                            s_tp_disp = s_tp_ceiling_calc
+                        else:
+                            s_tp_disp = min(s_tp_raw_calc, s_tp_ceiling_calc)
+                        tp_label = "ALT BAND" if (s_tp_raw_calc > 0.0 and s_tp_raw_calc <= s_tp_ceiling_calc) else "GÜVENLİK DUVARI"
+                    else:
+                        s_tp_disp = s_avg_disp - atr_tp_distance
+                        tp_label = "ATR"
+                        
+                    st.success(f"🟢 **KAR-AL ({tp_label}):** `{s_tp_disp:.2f}`")
                     if st.session_state[f"{state_prefix}s_status"][3]:
                         st.error(f"🔴 **STOP-LOSS:** `{s_avg_disp + (ATR_SL_MULT * atr_k4):.2f}`")
 
@@ -1333,5 +1412,6 @@ live_dca_fragment()
 with st.sidebar:
     countdown_fragment()
     st.markdown("---")
+    # Platformdan güvenli çıkış yapmayı sağlayan çıkış butonu
     if st.button("🚪 Platformdan Çıkış", key="global_logout_button", use_container_width=True, on_click=logout_callback):
         st.rerun()
