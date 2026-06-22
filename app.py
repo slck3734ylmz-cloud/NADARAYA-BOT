@@ -59,6 +59,12 @@ def check_password():
             50% { transform: translateY(-6px) rotate(4deg); }
         }
         .sheep-emoji { display: inline-block; animation: sheepBounce 2.2s ease-in-out infinite; }
+        /* Giriş formunu (text_input + button) görselle aynı 380px genişliğe ve ortaya hizalar */
+        div[data-testid="stForm"], 
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(div[data-testid="stForm"]) {
+            max-width: 380px;
+            margin: 0 auto;
+        }
         </style>
         <div style="display:flex; align-items:center; justify-content:center; padding:2.5rem 0 1rem; font-family: -apple-system, sans-serif;">
           <div style="width:380px; text-align:center;">
@@ -84,14 +90,17 @@ def check_password():
         unsafe_allow_html=True
     )
 
-    col_login, _ = st.columns([1, 1.5])
+    _, col_login, _ = st.columns([1, 1.4, 1])
     with col_login:
-        user_password = st.text_input("Şifre", type="password", key="login_pass_key_global", label_visibility="collapsed", placeholder="Şifrenizi girin")
-        if st.button("Giriş Yap", key="login_btn_key_global", use_container_width=True):
-            if user_password == "dca2026": 
-                st.session_state.password_correct = True
-                st.rerun()
-            else: st.error("❌ Hatalı Şifre! Erişim reddedildi.")
+        with st.form(key="login_form"):
+            user_password = st.text_input("Şifre", type="password", key="login_pass_key_global", label_visibility="collapsed", placeholder="Şifrenizi girin")
+            submitted = st.form_submit_button("Giriş Yap", use_container_width=True)
+            if submitted:
+                if user_password == "dca2026":
+                    st.session_state.password_correct = True
+                    st.rerun()
+                else:
+                    st.error("❌ Hatalı Şifre! Erişim reddedildi.")
     return False
 
 if not check_password(): st.stop()
