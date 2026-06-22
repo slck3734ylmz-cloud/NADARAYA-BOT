@@ -567,10 +567,14 @@ def live_dca_fragment():
             l_tp = st.session_state[f"{state_prefix}l_avg_price"] * (1 + target_profit_ratio)
             if st.session_state[f"{state_prefix}l_status"][2] and current_price <= (nw_alt_4h * (1 - stop_loss_ratio)):
                 order_result = place_futures_order(selected_symbol, "sell", st.session_state[f"{state_prefix}l_crypto"], is_live=live_trading_enabled, reduce_only=True)
+                l_avg_for_msg = st.session_state[f"{state_prefix}l_avg_price"]
+                l_crypto_for_msg = st.session_state[f"{state_prefix}l_crypto"]
+                l_pnl_usd = (current_price - l_avg_for_msg) * l_crypto_for_msg
+                l_pnl_pct = ((current_price / l_avg_for_msg) - 1) * 100 if l_avg_for_msg > 0 else 0.0
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"🔴 *[{mode_tag}] LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}{order_note}"
+                msg = f"🔴 *[{mode_tag}] LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {l_avg_for_msg:.2f}\nSatış: {current_price:.2f}\nKapatılan Miktar: {l_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nK/Z: {l_pnl_usd:+.2f} USDT ({l_pnl_pct:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
@@ -579,10 +583,14 @@ def live_dca_fragment():
                 save_state_to_db()
             elif current_price >= l_tp:
                 order_result = place_futures_order(selected_symbol, "sell", st.session_state[f"{state_prefix}l_crypto"], is_live=live_trading_enabled, reduce_only=True)
+                l_avg_for_msg = st.session_state[f"{state_prefix}l_avg_price"]
+                l_crypto_for_msg = st.session_state[f"{state_prefix}l_crypto"]
+                l_pnl_usd = (current_price - l_avg_for_msg) * l_crypto_for_msg
+                l_pnl_pct = ((current_price / l_avg_for_msg) - 1) * 100 if l_avg_for_msg > 0 else 0.0
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"🟢 *[{mode_tag}] LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}{order_note}"
+                msg = f"🟢 *[{mode_tag}] LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {l_avg_for_msg:.2f}\nSatış: {current_price:.2f}\nKapatılan Miktar: {l_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nK/Z: {l_pnl_usd:+.2f} USDT ({l_pnl_pct:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
@@ -590,16 +598,20 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
                 save_state_to_db()
 
+
         if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
             s_stop = st.session_state[f"{state_prefix}s_avg_price"] * (1 + stop_loss_ratio)
             s_tp = st.session_state[f"{state_prefix}s_avg_price"] * (1 - target_profit_ratio)
             if st.session_state[f"{state_prefix}s_status"][2] and current_price >= s_stop:
                 order_result = place_futures_order(selected_symbol, "buy", st.session_state[f"{state_prefix}s_crypto"], is_live=live_trading_enabled, reduce_only=True)
-                pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
+                s_avg_for_msg = st.session_state[f"{state_prefix}s_avg_price"]
+                s_crypto_for_msg = st.session_state[f"{state_prefix}s_crypto"]
+                pnl = (s_avg_for_msg - current_price) / s_avg_for_msg if s_avg_for_msg > 0 else 0.0
+                s_pnl_usd = st.session_state[f"{state_prefix}s_usd_spent"] * pnl
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"🔴 *[{mode_tag}] SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}{order_note}"
+                msg = f"🔴 *[{mode_tag}] SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {s_avg_for_msg:.2f}\nKapanış: {current_price:.2f}\nKapatılan Miktar: {s_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nK/Z: {s_pnl_usd:+.2f} USDT ({pnl*100:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
@@ -608,11 +620,14 @@ def live_dca_fragment():
                 save_state_to_db()
             elif current_price <= s_tp:
                 order_result = place_futures_order(selected_symbol, "buy", st.session_state[f"{state_prefix}s_crypto"], is_live=live_trading_enabled, reduce_only=True)
-                pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
+                s_avg_for_msg = st.session_state[f"{state_prefix}s_avg_price"]
+                s_crypto_for_msg = st.session_state[f"{state_prefix}s_crypto"]
+                pnl = (s_avg_for_msg - current_price) / s_avg_for_msg if s_avg_for_msg > 0 else 0.0
+                s_pnl_usd = st.session_state[f"{state_prefix}s_usd_spent"] * pnl
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"🟢 *[{mode_tag}] SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}{order_note}"
+                msg = f"🟢 *[{mode_tag}] SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {s_avg_for_msg:.2f}\nKapanış: {current_price:.2f}\nKapatılan Miktar: {s_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nK/Z: {s_pnl_usd:+.2f} USDT ({pnl*100:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
@@ -631,7 +646,7 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}l_avg_price"] = st.session_state[f"{state_prefix}l_usd_spent"] / st.session_state[f"{state_prefix}l_crypto"]
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"📈 *[{mode_tag}] LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}{order_note}"
+                msg = f"📈 *[{mode_tag}] LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
@@ -648,7 +663,7 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"📈 *[{mode_tag}] SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}{order_note}"
+                msg = f"📈 *[{mode_tag}] SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
@@ -749,6 +764,39 @@ def live_dca_fragment():
             with col_rsi_c:
                 st.write("**15m (Normal)**"); st.code(f"{rsi_15m_val:.1f}")
                 st.write("**1d (Ana Trend)**"); st.code(f"{rsi_1d_val:.1f}")
+
+            st.markdown("---")
+            st.write("💼 **Açık Pozisyonlar**")
+
+            l_active = sum(st.session_state[f"{state_prefix}l_status"]) > 0
+            s_active = sum(st.session_state[f"{state_prefix}s_status"]) > 0
+
+            if not l_active and not s_active:
+                st.caption("Şu anda açık pozisyon yok. Kademe seviyelerinden biri tetiklenince burada görünecek.")
+            else:
+                if l_active:
+                    l_avg = st.session_state[f"{state_prefix}l_avg_price"]
+                    l_amt = st.session_state[f"{state_prefix}l_crypto"]
+                    l_pnl_usd = (current_price - l_avg) * l_amt
+                    l_pnl_pct = ((current_price / l_avg) - 1) * 100 if l_avg > 0 else 0.0
+                    l_kademe = sum(st.session_state[f"{state_prefix}l_status"])
+                    st.markdown(f"**📈 LONG** — {l_kademe}/3 kademe açık")
+                    pl1, pl2, pl3 = st.columns(3)
+                    pl1.metric("Maliyet Ort.", f"${l_avg:,.2f}")
+                    pl2.metric("Miktar", f"{l_amt:.6f} {coin_title.split('/')[0]}")
+                    pl3.metric("K/Z", f"${l_pnl_usd:+,.2f}", f"{l_pnl_pct:+.2f}%")
+
+                if s_active:
+                    s_avg = st.session_state[f"{state_prefix}s_avg_price"]
+                    s_amt = st.session_state[f"{state_prefix}s_crypto"]
+                    s_pnl_usd = (s_avg - current_price) * s_amt
+                    s_pnl_pct = ((s_avg / current_price) - 1) * 100 if current_price > 0 else 0.0
+                    s_kademe = sum(st.session_state[f"{state_prefix}s_status"])
+                    st.markdown(f"**📉 SHORT** — {s_kademe}/3 kademe açık")
+                    ps1, ps2, ps3 = st.columns(3)
+                    ps1.metric("Maliyet Ort.", f"${s_avg:,.2f}")
+                    ps2.metric("Miktar", f"{s_amt:.6f} {coin_title.split('/')[0]}")
+                    ps3.metric("K/Z", f"${s_pnl_usd:+,.2f}", f"{s_pnl_pct:+.2f}%")
 
         st.markdown("---")
         st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
