@@ -440,7 +440,7 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
     return fig
 
 # ================= YAN PANEL AYARLARI VE NAVİGASYON =================
-st.sidebar.markdown("## 🐉 Kyoun")
+st.sidebar.markdown("## 🐑 Kyoun")
 st.sidebar.caption("BTC/USDT Futures Hedging Terminal")
 st.sidebar.markdown("---")
 st.sidebar.subheader("💳 Cüzdan Durumu")
@@ -573,7 +573,7 @@ def save_state_to_db():
 layer_sizes = [0.0001, 0.0004, 0.0012]
 
 def send_telegram_msg(message):
-    signed_message = f"🐉 *Kyoun*\n{message}"
+    signed_message = f"🐑 *Kyoun*\n{message}"
     url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
     payload = {"chat_id": telegram_chat_id, "text": signed_message, "parse_mode": "Markdown"}
     try: requests.post(url, json=payload)
