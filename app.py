@@ -856,7 +856,14 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 Strateji Modu")
 
 dca_has_position = sum(st.session_state.get(f"{state_prefix}l_status", [False, False, False])) > 0 or sum(st.session_state.get(f"{state_prefix}s_status", [False, False, False])) > 0
-scalp_has_position = st.session_state.get(f"{state_prefix}scalp_active", False)
+# Bozuk/eksik state'i (scalp_active=True ama giriş bilgisi geçersiz) gerçek pozisyon
+# olarak saymamak için aynı doğrulama burada da uygulanır.
+scalp_has_position = (
+    st.session_state.get(f"{state_prefix}scalp_active", False)
+    and st.session_state.get(f"{state_prefix}scalp_direction") in ("LONG", "SHORT")
+    and st.session_state.get(f"{state_prefix}scalp_entry_price", 0.0) > 0
+    and st.session_state.get(f"{state_prefix}scalp_crypto", 0.0) > 0
+)
 
 # Mod seçimi HER ZAMAN serbesttir (kullanıcı istediği an görüntü/seçimi değiştirebilir).
 # Ama gerçek pozisyon AÇMA mantığı, açık pozisyonu olan tarafa kilitli kalır - bu sayede
@@ -1420,8 +1427,22 @@ def scalp_fragment():
         scale_factor = scalp_tp_distance / raw_tp_distance if raw_tp_distance > 0 else 1.0
         scalp_sl_distance = SCALP_SL_MULT * atr_5m * scale_factor
 
-        scalp_active = st.session_state.get(f"{state_prefix}scalp_active", False)
+        scalp_active_raw = st.session_state.get(f"{state_prefix}scalp_active", False)
         scalp_direction = st.session_state.get(f"{state_prefix}scalp_direction")
+        scalp_entry_check = st.session_state.get(f"{state_prefix}scalp_entry_price", 0.0)
+        scalp_amt_check = st.session_state.get(f"{state_prefix}scalp_crypto", 0.0)
+
+        # GÜVENLİK KONTROLÜ: scalp_active=True olsa da, giriş fiyatı veya miktar
+        # geçersizse (0 veya boş) bu GERÇEK bir pozisyon değildir - bozuk/eksik bir
+        # state kaydından kaynaklanıyor olabilir (örn. veritabanı geçişi sırasında).
+        # Bu durumda state otomatik olarak temizlenir ve "pozisyon yok" kabul edilir.
+        scalp_active = scalp_active_raw and scalp_direction in ("LONG", "SHORT") and scalp_entry_check > 0 and scalp_amt_check > 0
+        if scalp_active_raw and not scalp_active:
+            st.session_state[f"{state_prefix}scalp_active"] = False
+            st.session_state[f"{state_prefix}scalp_direction"] = None
+            st.session_state[f"{state_prefix}scalp_crypto"] = 0.0
+            st.session_state[f"{state_prefix}scalp_entry_price"] = 0.0
+            save_state_to_db()
 
         # --- ÇIKIŞ KONTROLÜ (pozisyon açıksa) ---
         if scalp_active:
