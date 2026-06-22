@@ -15,6 +15,13 @@ from supabase import create_client, Client
 MEXC_API_KEY = st.secrets.get("MEXC_API_KEY", "")
 MEXC_API_SECRET = st.secrets.get("MEXC_API_SECRET", "")
 
+# Rol bazlı erişim: VIEWER_PASSWORD ile giren sadece izleyebilir (Kağıt Mod'da kalır,
+# Canlı Mod'a geçemez). ADMIN_PASSWORD ile giren tam yetkiye sahiptir (Canlı Mod dahil).
+# Admin şifresi st.secrets'tan okunur, bulunamazsa Canlı Mod tamamen devre dışı kalır
+# (güvenli varsayılan - secrets eksikse kimse gerçek emir gönderemez).
+VIEWER_PASSWORD = "dca2026"
+ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "")
+
 exchange = ccxt.mexc({
     'apiKey': MEXC_API_KEY,
     'secret': MEXC_API_SECRET,
@@ -118,8 +125,13 @@ def check_password():
             user_password = st.text_input("Şifre", type="password", key="login_pass_key_global", label_visibility="collapsed", placeholder="Şifrenizi girin")
             submitted = st.form_submit_button("Giriş Yap", use_container_width=True)
             if submitted:
-                if user_password == "dca2026":
+                if user_password == VIEWER_PASSWORD:
                     st.session_state.password_correct = True
+                    st.session_state.user_role = "viewer"
+                    st.rerun()
+                elif ADMIN_PASSWORD and user_password == ADMIN_PASSWORD:
+                    st.session_state.password_correct = True
+                    st.session_state.user_role = "admin"
                     st.rerun()
                 else:
                     st.error("❌ Hatalı Şifre! Erişim reddedildi.")
@@ -473,8 +485,11 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
 # ================= YAN PANEL AYARLARI VE NAVİGASYON =================
 st.sidebar.markdown("## 🐑 Kyoun")
 st.sidebar.caption("BTC/USDT Futures Hedging Terminal")
+role_label = "👑 Yönetici" if st.session_state.get("user_role") == "admin" else "👁️ İzleyici"
+st.sidebar.caption(f"Giriş: {role_label}")
 if st.sidebar.button("🚪 Çıkış Yap", key="logout_button_global", use_container_width=True):
     st.session_state.password_correct = False
+    st.session_state.user_role = None
     st.rerun()
 st.sidebar.markdown("---")
 st.sidebar.subheader("💳 Cüzdan Durumu")
@@ -684,18 +699,25 @@ def place_futures_order(symbol, side, amount, leverage=None, is_live=False, redu
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ İşlem Modu (MEXC Futures)")
 
+is_admin = st.session_state.get("user_role") == "admin"
 api_keys_present = bool(MEXC_API_KEY and MEXC_API_SECRET)
-if not api_keys_present:
+
+if not is_admin:
+    st.sidebar.info("👁️ İzleyici modundasınız. Sinyalleri ve grafikleri görebilirsiniz; Canlı Mod sadece yönetici erişimiyle açılabilir.")
+elif not api_keys_present:
     st.sidebar.warning("⚠️ MEXC API anahtarı tanımlı değil. Sadece Kağıt Mod kullanılabilir.")
 
+# Canlı Mod seçeneği SADECE admin rolüne ve API anahtarlarının varlığına bağlıdır.
+# İzleyici (viewer) rolündeki biri ne yaparsa yapsın bu kısıtlamayı aşamaz - tüm gerçek
+# emir gönderme çağrıları (place_futures_order) tek noktadan bu değişkene bağlıdır.
 trading_mode = st.sidebar.radio(
     "Mod Seçimi",
     options=["📝 Kağıt Mod (Emir Gönderilmez)", "🔴 CANLI MOD (Gerçek Emir Gönderilir)"],
     index=0,
     key="trading_mode_radio",
-    disabled=not api_keys_present
+    disabled=not (is_admin and api_keys_present)
 )
-live_trading_enabled = trading_mode.startswith("🔴") and api_keys_present
+live_trading_enabled = trading_mode.startswith("🔴") and api_keys_present and is_admin
 
 if live_trading_enabled:
     st.sidebar.error("🔴 CANLI MOD AKTİF — Bu bot gerçek MEXC futures hesabınızda gerçek emir gönderecek!")
@@ -706,8 +728,8 @@ if live_trading_enabled:
 else:
     st.sidebar.success("📝 Kağıt Mod: Sinyaller hesaplanır, hiçbir gerçek emir gönderilmez.")
 
-manual_lock = st.sidebar.toggle("🔒 Bekleyen Seviyeleri Dondur", value=st.session_state.get(f"{state_prefix}manual_lock_db", False), key="live_manual_lock_toggle")
-if manual_lock != st.session_state.get(f"{state_prefix}manual_lock_db", False):
+manual_lock = st.sidebar.toggle("🔒 Bekleyen Seviyeleri Dondur", value=st.session_state.get(f"{state_prefix}manual_lock_db", False), key="live_manual_lock_toggle", disabled=not is_admin)
+if is_admin and manual_lock != st.session_state.get(f"{state_prefix}manual_lock_db", False):
     # Toggle değiştirildi - kullanıcı kilidi açtı/kapattı. Kapatıldıysa kilitli
     # fiyatlar da temizlenir (aksi halde bir sonraki açılışta eski fiyatlar kullanılır).
     st.session_state[f"{state_prefix}manual_lock_db"] = manual_lock
@@ -716,11 +738,11 @@ if manual_lock != st.session_state.get(f"{state_prefix}manual_lock_db", False):
     save_state_to_db()
 
 col_b1, col_b2 = st.sidebar.columns(2)
-if col_b1.button("🔔 Telegram Test", key="live_telegram_test_button_unique", use_container_width=True):
+if col_b1.button("🔔 Telegram Test", key="live_telegram_test_button_unique", use_container_width=True, disabled=not is_admin):
     send_telegram_msg(f"👋 *Bağlantı Testi:* Web siteniz üzerinden gönderilen test mesajı başarılı!")
     st.sidebar.success("Mesaj gönderildi!")
 
-if col_b2.button("🔴 Sıfırla", key="live_reset_all_positions_button", use_container_width=True):
+if col_b2.button("🔴 Sıfırla", key="live_reset_all_positions_button", use_container_width=True, disabled=not is_admin):
     st.session_state[f"{state_prefix}l_status"] = [False, False, False]
     st.session_state[f"{state_prefix}s_status"] = [False, False, False]
     st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
