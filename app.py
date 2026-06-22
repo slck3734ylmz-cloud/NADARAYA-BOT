@@ -50,11 +50,44 @@ def check_password():
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
     if st.session_state.password_correct: return True
-    st.markdown("<h2 style='text-align: center; color: white; margin-top: 50px;'>🔒 Kyoun Terminal Güvenlik Girişi</h2>", unsafe_allow_html=True)
+
+    st.markdown(
+        """
+        <style>
+        @keyframes sheepBounce {
+            0%, 100% { transform: translateY(0) rotate(-4deg); }
+            50% { transform: translateY(-6px) rotate(4deg); }
+        }
+        .sheep-emoji { display: inline-block; animation: sheepBounce 2.2s ease-in-out infinite; }
+        </style>
+        <div style="display:flex; align-items:center; justify-content:center; padding:2.5rem 0 1rem; font-family: -apple-system, sans-serif;">
+          <div style="width:380px; text-align:center;">
+            <div style="position:relative; width:112px; height:112px; margin:0 auto 8px;">
+              <svg width="112" height="112" viewBox="0 0 112 112" style="position:absolute; top:0; left:0;">
+                <defs>
+                  <radialGradient id="badgeGlow" cx="50%" cy="38%" r="65%">
+                    <stop offset="0%" stop-color="#30386B"/>
+                    <stop offset="100%" stop-color="#161B33"/>
+                  </radialGradient>
+                </defs>
+                <circle cx="56" cy="56" r="54" fill="url(#badgeGlow)" stroke="#9A8BF0" stroke-width="1"/>
+                <circle cx="56" cy="56" r="45" fill="none" stroke="#4A4F7A" stroke-width="0.6"/>
+              </svg>
+              <div class="sheep-emoji" style="position:absolute; top:0; left:0; width:112px; height:112px; display:flex; align-items:center; justify-content:center; font-size:46px;">🐑</div>
+            </div>
+            <div style="color:#9A8BF0; font-size:10px; letter-spacing:2px; margin-bottom:14px;">幸運の羊</div>
+            <div style="color:#E8E9F5; font-size:28px; font-weight:600; letter-spacing:3px; margin-bottom:6px;">KYOUN</div>
+            <div style="color:#6E72A0; font-size:11px; letter-spacing:2px; text-transform:uppercase; margin-bottom:8px;">şanslı koyun terminali</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
     col_login, _ = st.columns([1, 1.5])
     with col_login:
-        user_password = st.text_input("Lütfen şahsi siber güvenlik şifrenizi girin:", type="password", key="login_pass_key_global")
-        if st.button("Giriş Yap", key="login_btn_key_global"):
+        user_password = st.text_input("Şifre", type="password", key="login_pass_key_global", label_visibility="collapsed", placeholder="Şifrenizi girin")
+        if st.button("Giriş Yap", key="login_btn_key_global", use_container_width=True):
             if user_password == "dca2026": 
                 st.session_state.password_correct = True
                 st.rerun()
