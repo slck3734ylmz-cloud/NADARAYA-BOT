@@ -933,7 +933,8 @@ def live_dca_fragment():
 
         with col_right:
             st.subheader(f"📊 Kyoun · {coin_title} Canlı Terminal")
-            st.caption(f"🕒 Son veri güncellemesi: {time.strftime('%H:%M:%S')}")
+            tr_time = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)
+            st.caption(f"🕒 Son veri güncellemesi: {tr_time.strftime('%H:%M:%S')} (TR)")
 
             if live_trading_enabled:
                 st.error("🔴 CANLI MOD: Sinyaller gerçek MEXC futures emri olarak gönderiliyor!")
