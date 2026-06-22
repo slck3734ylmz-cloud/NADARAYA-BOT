@@ -602,6 +602,10 @@ def live_dca_fragment():
         rsi_k1 = df_k1.iloc[-1]["RSI"]
         rsi_k2 = df_k2.iloc[-1]["RSI"]
         rsi_k3 = df_k3.iloc[-1]["RSI"]
+        # Önceki bar RSI değerleri - "dönüş" (crossover) tespiti için gerekli.
+        rsi_k1_prev = df_k1.iloc[-2]["RSI"]
+        rsi_k2_prev = df_k2.iloc[-2]["RSI"]
+        rsi_k3_prev = df_k3.iloc[-2]["RSI"]
         RSI_OVERSOLD, RSI_OVERBOUGHT = 30, 70
 
         k1_alt_base = raw_k1_alt
@@ -701,11 +705,16 @@ def live_dca_fragment():
                 save_state_to_db()
 
         rsi_per_kademe = [rsi_k1, rsi_k2, rsi_k3]
+        rsi_prev_per_kademe = [rsi_k1_prev, rsi_k2_prev, rsi_k3_prev]
 
-        for idx, th, val, rsi_val in zip([0, 1, 2], [nw_alt_5m, nw_alt_1h, nw_alt_4h], layer_sizes, rsi_per_kademe):
+        for idx, th, val, rsi_val, rsi_prev in zip([0, 1, 2], [nw_alt_5m, nw_alt_1h, nw_alt_4h], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe):
             nw_signal = current_price <= th and (idx == 0 or st.session_state[f"{state_prefix}l_status"][idx-1]) and not st.session_state[f"{state_prefix}l_status"][idx]
-            if nw_signal and rsi_val >= RSI_OVERSOLD:
-                # NW sinyali var ama RSI aşırı satım bölgesinde değil -> onay yok, alım yapılmaz.
+            # RSI ONAYI: sabit eşik beklemek yerine "dönüş" aranır — RSI önceki barda
+            # aşırı satım bölgesindeydi (oversold) ve şimdi 30 seviyesini yukarı kesti.
+            # Bu, sadece anlık RSI<30 olmasını beklemekten daha güvenilir bir momentum dönüş sinyalidir.
+            rsi_confirms_long = rsi_prev < RSI_OVERSOLD and rsi_val >= RSI_OVERSOLD
+            if nw_signal and not rsi_confirms_long:
+                # NW sinyali var ama RSI henüz oversold'dan dönmedi -> onay yok, alım yapılmaz.
                 continue
             if nw_signal:
                 order_result = place_futures_order(selected_symbol, "buy", val, is_live=live_trading_enabled)
@@ -717,16 +726,19 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}l_avg_price"] = st.session_state[f"{state_prefix}l_usd_spent"] / st.session_state[f"{state_prefix}l_crypto"]
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"📈 *[{mode_tag}] LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Onayı: {rsi_val:.1f} (<{RSI_OVERSOLD}){order_note}"
+                msg = f"📈 *[{mode_tag}] LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Dönüşü: {rsi_prev:.1f} → {rsi_val:.1f} (oversold'dan çıkış){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
                 break
 
-        for idx, th, val, rsi_val in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes, rsi_per_kademe):
+        for idx, th, val, rsi_val, rsi_prev in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe):
             nw_signal = current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]
-            if nw_signal and rsi_val <= RSI_OVERBOUGHT:
-                # NW sinyali var ama RSI aşırı alım bölgesinde değil -> onay yok, alım yapılmaz.
+            # RSI ONAYI: RSI önceki barda aşırı alım bölgesindeydi (overbought) ve
+            # şimdi 70 seviyesini aşağı kesti — momentum tükeniş/dönüş sinyali.
+            rsi_confirms_short = rsi_prev > RSI_OVERBOUGHT and rsi_val <= RSI_OVERBOUGHT
+            if nw_signal and not rsi_confirms_short:
+                # NW sinyali var ama RSI henüz overbought'tan dönmedi -> onay yok, alım yapılmaz.
                 continue
             if nw_signal:
                 order_result = place_futures_order(selected_symbol, "sell", val, is_live=live_trading_enabled)
@@ -738,7 +750,7 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"📈 *[{mode_tag}] SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Onayı: {rsi_val:.1f} (>{RSI_OVERBOUGHT}){order_note}"
+                msg = f"📈 *[{mode_tag}] SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Dönüşü: {rsi_prev:.1f} → {rsi_val:.1f} (overbought'tan çıkış){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
@@ -833,14 +845,14 @@ def live_dca_fragment():
         
             st.markdown("---")
             st.write(f"🎯 **Aktif Kademe RSI Filtreleri** ({active_engine_name})")
-            st.caption(f"LONG onayı için RSI < {RSI_OVERSOLD}, SHORT onayı için RSI > {RSI_OVERBOUGHT} olmalı.")
+            st.caption(f"LONG onayı: RSI önceki barda <{RSI_OVERSOLD} idi, şimdi yukarı kesti. SHORT onayı: RSI önceki barda >{RSI_OVERBOUGHT} idi, şimdi aşağı kesti.")
             col_fa, col_fb, col_fc = st.columns(3)
-            for col, lbl, rsi_v in zip([col_fa, col_fb, col_fc], [l1_lbl, l2_lbl, l3_lbl], [rsi_k1, rsi_k2, rsi_k3]):
+            for col, lbl, rsi_v, rsi_p in zip([col_fa, col_fb, col_fc], [l1_lbl, l2_lbl, l3_lbl], [rsi_k1, rsi_k2, rsi_k3], [rsi_k1_prev, rsi_k2_prev, rsi_k3_prev]):
                 with col:
-                    long_ok = "✅" if rsi_v < RSI_OVERSOLD else "❌"
-                    short_ok = "✅" if rsi_v > RSI_OVERBOUGHT else "❌"
+                    long_ok = "✅" if (rsi_p < RSI_OVERSOLD and rsi_v >= RSI_OVERSOLD) else "❌"
+                    short_ok = "✅" if (rsi_p > RSI_OVERBOUGHT and rsi_v <= RSI_OVERBOUGHT) else "❌"
                     st.write(f"**{lbl}**")
-                    st.code(f"RSI: {rsi_v:.1f}")
+                    st.code(f"RSI: {rsi_p:.1f} → {rsi_v:.1f}")
                     st.caption(f"LONG: {long_ok}  |  SHORT: {short_ok}")
 
             st.markdown("---")
