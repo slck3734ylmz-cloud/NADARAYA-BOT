@@ -432,7 +432,6 @@ st.sidebar.caption("BTC/USDT Futures Hedging Terminal")
 st.sidebar.markdown("---")
 st.sidebar.subheader("💳 Cüzdan Durumu")
 
-# Bot sadece BTC/USDT futures üzerinde sabit çalışır (coin seçimi kaldırıldı).
 selected_symbol = "BTC/USDT:USDT"
 coin_title = selected_symbol.split(':')[0]
 state_prefix = f"{selected_symbol}_"
@@ -484,7 +483,6 @@ if f"{state_prefix}balance_usd" not in st.session_state:
             st.session_state[f"{state_prefix}s_usd_spent"] = db_data.get("s_usd_spent", 0.0)
             st.session_state[f"{state_prefix}s_avg_price"] = db_data.get("s_avg_price", 0.0)
             
-            # Veritabanındaki log_history içinden gizlenmiş trade_history kayıtlarını ayırarak yükler
             raw_history = db_data.get("log_history") or []
             st.session_state[f"{state_prefix}log_history"] = [x for x in raw_history if not x.startswith("STRUCT_TRADE:") and not x.startswith("STATE_K4:")]
             
@@ -501,25 +499,25 @@ if f"{state_prefix}balance_usd" not in st.session_state:
                 db_data.get("l_status_0", False),
                 db_data.get("l_status_1", False),
                 db_data.get("l_status_2", False),
-                False  # Varsayılan K4
+                False
             ]
             s_status_db = [
                 db_data.get("s_status_0", False),
                 db_data.get("s_status_1", False),
                 db_data.get("s_status_2", False),
-                False  # Varsayılan K4
+                False
             ]
             l_entry_db = [
                 db_data.get("l_entry_0", 0.0) if "l_entry_0" in db_data else 0.0,
                 db_data.get("l_entry_1", 0.0) if "l_entry_1" in db_data else 0.0,
                 db_data.get("l_entry_2", 0.0) if "l_entry_2" in db_data else 0.0,
-                0.0  # Varsayılan K4
+                0.0
             ]
             s_entry_db = [
                 db_data.get("s_entry_0", 0.0) if "s_entry_0" in db_data else 0.0,
                 db_data.get("s_entry_1", 0.0) if "s_entry_1" in db_data else 0.0,
                 db_data.get("s_entry_2", 0.0) if "s_entry_2" in db_data else 0.0,
-                0.0  # Varsayılan K4
+                0.0
             ]
 
             # Veritabanında gömülü olan 4. Kademe (K4) durumlarını geri yükleme
@@ -557,15 +555,27 @@ if f"{state_prefix}balance_usd" not in st.session_state:
         st.session_state[f"{state_prefix}log_history"] = []
         st.session_state[f"{state_prefix}trade_history"] = []
 
+# --- INDEXERROR ÖNLEYİCİ GEÇİŞ SİGORTASI ---
+# Eğer tarayıcıda veya sunucuda eski 3 kademeli oturum kalıntıları varsa, 
+# bunları güvenli bir şekilde 4 kademeye otomatik olarak yükseltir.
+for key, fill_val in [
+    (f"{state_prefix}l_status", False),
+    (f"{state_prefix}s_status", False),
+    (f"{state_prefix}l_entry_prices", 0.0),
+    (f"{state_prefix}s_entry_prices", 0.0)
+]:
+    if key in st.session_state:
+        if len(st.session_state[key]) < 4:
+            st.session_state[key] = list(st.session_state[key]) + [fill_val] * (4 - len(st.session_state[key]))
+
 if f"{state_prefix}locked_prices" not in st.session_state: 
     st.session_state[f"{state_prefix}locked_prices"] = None
 
 def save_state_to_db():
     try:
-        # trade_history listesini veritabanına uyumlu şekilde log_history içine gömüyoruz
         serialized_trades = [f"STRUCT_TRADE:{json.dumps(t)}" for t in st.session_state[f"{state_prefix}trade_history"]]
         
-        # 4. Kademe (K4) verilerini veritabanına gömme (STRUCT_TRADE ile aynı mantıkta)
+        # 4. Kademe (K4) verilerini veritabanına gömme
         k4_state_dict = {
             "l_status_3": st.session_state[f"{state_prefix}l_status"][3],
             "s_status_3": st.session_state[f"{state_prefix}s_status"][3],
@@ -614,15 +624,6 @@ def send_telegram_msg(message):
     except: pass
 
 def place_futures_order(symbol, side, amount, leverage=None, is_live=False, reduce_only=False):
-    """
-    MEXC Futures (vadeli) emir gönderme yardımcı fonksiyonu.
-    - is_live=False (Kağıt Mod): Hiçbir gerçek emir göndermez, sadece sonucu simüle edip
-      başarı durumu döner. Sinyal/log/Telegram akışı normal şekilde devam eder.
-    - is_live=True (Canlı Mod): MEXC'e gerçek bir piyasa emri gönderir.
-    side: 'buy' (long aç/short kapat) veya 'sell' (short aç/long kapat)
-    reduce_only: pozisyon kapatma (stop-loss/kar-al) emirlerinde True gönderilir.
-    leverage: belirtilmezse BOT_LEVERAGE (200x) kullanılır.
-    """
     if leverage is None:
         leverage = BOT_LEVERAGE
     if not is_live:
@@ -1273,20 +1274,17 @@ def check_password_fixed():
         }
         .sheep-emoji { display: inline-block; animation: sheepBounce 2.2s ease-in-out infinite; }
         
-        /* Giriş formunun daralmasını önler ve düzgün şekilde ortalar */
         div[data-testid="stForm"], 
         div[data-testid="stVerticalBlockBorderWrapper"]:has(div[data-testid="stForm"]) {
             max-width: 380px !important;
             margin: 0 auto !important;
         }
         
-        /* Streamlit form altındaki talimat yazısını tamamen gizleyerek çakışmayı önler */
         div[data-testid="InputInstructions"] {
             display: none !important;
             visibility: hidden !important;
         }
         
-        /* Input kutusuna yükseklik ve iç boşluk vererek ferahlatır */
         div[data-testid="stTextInput"] input {
             height: 48px !important;
             font-size: 15px !important;
@@ -1328,7 +1326,6 @@ def check_password_fixed():
                 st.error("❌ Hatalı Şifre! Erişim reddedildi.")
     return False
 
-# Eski check_password yerine yeni örtüşme önleyen check_password_fixed çağrılır.
 if not check_password_fixed(): st.stop()
 
 # ================= ANA PANEL ÇALIŞTIRMA VE ÇIKIŞ YAPISI =================
@@ -1336,6 +1333,5 @@ live_dca_fragment()
 with st.sidebar:
     countdown_fragment()
     st.markdown("---")
-    # Platformdan güvenli çıkış yapmayı sağlayan çıkış butonu
     if st.button("🚪 Platformdan Çıkış", key="global_logout_button", use_container_width=True, on_click=logout_callback):
         st.rerun()
