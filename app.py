@@ -432,6 +432,7 @@ st.sidebar.caption("BTC/USDT Futures Hedging Terminal")
 st.sidebar.markdown("---")
 st.sidebar.subheader("💳 Cüzdan Durumu")
 
+# Bot sadece BTC/USDT futures üzerinde sabit çalışır (coin seçimi kaldırıldı).
 selected_symbol = "BTC/USDT:USDT"
 coin_title = selected_symbol.split(':')[0]
 state_prefix = f"{selected_symbol}_"
@@ -469,8 +470,6 @@ else:
     st.sidebar.write("Fonlama oranı yükleniyor...")
 
 # ================= DURUM (STATE) GÜVENLİ YÜKLEME =================
-# 4 kademeli sistem (K1, K2, K3, K4) durum ve giriş fiyatlarının veritabanıyla 
-# uyumlu (sütunları aşmadan log_history üzerinden gizli) şekilde yüklenmesi sağlanır.
 if f"{state_prefix}balance_usd" not in st.session_state:
     loaded_from_db = False
     try:
@@ -485,11 +484,10 @@ if f"{state_prefix}balance_usd" not in st.session_state:
             st.session_state[f"{state_prefix}s_usd_spent"] = db_data.get("s_usd_spent", 0.0)
             st.session_state[f"{state_prefix}s_avg_price"] = db_data.get("s_avg_price", 0.0)
             
+            # Veritabanındaki log_history içinden gizlenmiş trade_history kayıtlarını ayırarak yükler
             raw_history = db_data.get("log_history") or []
-            # Log_history dizisinden yapılandırılmış işlemleri ve 4. Kademe durumlarını ayıklıyoruz
             st.session_state[f"{state_prefix}log_history"] = [x for x in raw_history if not x.startswith("STRUCT_TRADE:") and not x.startswith("STATE_K4:")]
             
-            # İşlem Geçmişinin doldurulması
             st.session_state[f"{state_prefix}trade_history"] = []
             for x in raw_history:
                 if x.startswith("STRUCT_TRADE:"):
@@ -498,33 +496,33 @@ if f"{state_prefix}balance_usd" not in st.session_state:
                     except:
                         pass
 
-            # Sütun uyumluluğu için ilk 3 kademe doğrudan tablodan okunur, 4. kademe varsayılan False atanır.
+            # Standart 4'lü durum listeleri
             l_status_db = [
                 db_data.get("l_status_0", False),
                 db_data.get("l_status_1", False),
                 db_data.get("l_status_2", False),
-                False
+                False  # Varsayılan K4
             ]
             s_status_db = [
                 db_data.get("s_status_0", False),
                 db_data.get("s_status_1", False),
                 db_data.get("s_status_2", False),
-                False
+                False  # Varsayılan K4
             ]
             l_entry_db = [
                 db_data.get("l_entry_0", 0.0) if "l_entry_0" in db_data else 0.0,
                 db_data.get("l_entry_1", 0.0) if "l_entry_1" in db_data else 0.0,
                 db_data.get("l_entry_2", 0.0) if "l_entry_2" in db_data else 0.0,
-                0.0
+                0.0  # Varsayılan K4
             ]
             s_entry_db = [
                 db_data.get("s_entry_0", 0.0) if "s_entry_0" in db_data else 0.0,
                 db_data.get("s_entry_1", 0.0) if "s_entry_1" in db_data else 0.0,
                 db_data.get("s_entry_2", 0.0) if "s_entry_2" in db_data else 0.0,
-                0.0
+                0.0  # Varsayılan K4
             ]
 
-            # log_history içerisinden 4. kademe veritabanı kilit durumunu çözümlüyoruz
+            # Veritabanında gömülü olan 4. Kademe (K4) durumlarını geri yükleme
             for x in raw_history:
                 if x.startswith("STATE_K4:"):
                     try:
@@ -564,9 +562,10 @@ if f"{state_prefix}locked_prices" not in st.session_state:
 
 def save_state_to_db():
     try:
-        # trade_history ve 4. kademe özel kilit parametrelerini log_history içine paketliyoruz
+        # trade_history listesini veritabanına uyumlu şekilde log_history içine gömüyoruz
         serialized_trades = [f"STRUCT_TRADE:{json.dumps(t)}" for t in st.session_state[f"{state_prefix}trade_history"]]
         
+        # 4. Kademe (K4) verilerini veritabanına gömme (STRUCT_TRADE ile aynı mantıkta)
         k4_state_dict = {
             "l_status_3": st.session_state[f"{state_prefix}l_status"][3],
             "s_status_3": st.session_state[f"{state_prefix}s_status"][3],
@@ -603,7 +602,7 @@ def save_state_to_db():
         supabase.table("bot_state").upsert(data).execute()
     except Exception as e: st.error(f"Veritabanı kaydı başarısız: {type(e).__name__}: {str(e)[:200]}")
 
-# Kademeler 4'e çıkarıldı ve toplam miktar tam 0.0020 BTC'ye eşitlendi.
+# Kademe miktarları güncellenerek tam 0.0020 BTC'ye göre dağıtılmıştır (En büyük alım K4):
 # K1=0.0001 BTC, K2=0.0002 BTC, K3=0.0005 BTC, K4=0.0012 BTC.
 layer_sizes = [0.0001, 0.0002, 0.0005, 0.0012]
 
@@ -615,6 +614,15 @@ def send_telegram_msg(message):
     except: pass
 
 def place_futures_order(symbol, side, amount, leverage=None, is_live=False, reduce_only=False):
+    """
+    MEXC Futures (vadeli) emir gönderme yardımcı fonksiyonu.
+    - is_live=False (Kağıt Mod): Hiçbir gerçek emir göndermez, sadece sonucu simüle edip
+      başarı durumu döner. Sinyal/log/Telegram akışı normal şekilde devam eder.
+    - is_live=True (Canlı Mod): MEXC'e gerçek bir piyasa emri gönderir.
+    side: 'buy' (long aç/short kapat) veya 'sell' (short aç/long kapat)
+    reduce_only: pozisyon kapatma (stop-loss/kar-al) emirlerinde True gönderilir.
+    leverage: belirtilmezse BOT_LEVERAGE (200x) kullanılır.
+    """
     if leverage is None:
         leverage = BOT_LEVERAGE
     if not is_live:
@@ -758,7 +766,6 @@ def live_dca_fragment():
         df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol, is_volatile=is_volatile)
 
         # =================== DİNAMİK 4 KADEMELİ SİSTEM ===================
-        # K1, K2, K3 ve K4 hiyerarşisi piyasa durumuna göre sıralanır.
         if is_volatile:
             df_k1, df_k2, df_k3, df_k4 = df_15m, df_1h, df_4h, df_1d
             suf_k1, suf_k2, suf_k3, suf_k4 = "_15m", "_1h", "_4h", "_1d"
@@ -782,7 +789,6 @@ def live_dca_fragment():
         raw_k3_ust = df_k3.iloc[-2][f"NW_Ust{suf_k3}"]
         raw_k4_ust = df_k4.iloc[-2][f"NW_Ust{suf_k4}"]
 
-        # Her kademenin RSI değerleri
         rsi_k1 = df_k1.iloc[-2]["RSI"]
         rsi_k2 = df_k2.iloc[-2]["RSI"]
         rsi_k3 = df_k3.iloc[-2]["RSI"]
@@ -795,6 +801,7 @@ def live_dca_fragment():
         
         # Kar al ve Stop Loss mesafeleri en son kademenin (K4) zaman dilimine (ATR) devredildi
         atr_k4 = df_k4.iloc[-2]["ATR"]
+        ATR_TP_MULT, ATR_SL_MULT = 1.0, 1.5
 
         # Kâr-al ve Stop-loss mesafelerinin piyasanın gerçek oynaklığına göre ölçeklenmesi
         round_trip_fee_pct = 2 * MEXC_TAKER_FEE_PCT
@@ -844,7 +851,7 @@ def live_dca_fragment():
             l_tp = l_avg_price + atr_tp_distance
             l_sl = l_avg_price - (ATR_SL_MULT * atr_k4)
             
-            # --- LONG STOP-LOSS (Sadece Son Kademe - K4 Alındıysa Çalışır) ---
+            # --- LONG STOP-LOSS TETİKLENME BLOKU (K4 Aktif Şartlı) ---
             if st.session_state[f"{state_prefix}l_status"][3] and current_price <= l_sl:
                 order_result = place_futures_order(selected_symbol, "sell", st.session_state[f"{state_prefix}l_crypto"], is_live=live_trading_enabled, reduce_only=True)
                 l_avg_for_msg = st.session_state[f"{state_prefix}l_avg_price"]
@@ -957,6 +964,7 @@ def live_dca_fragment():
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 
+                # İşlem geçmişini (trade_history) kütüphaneye kaydetme
                 trade_record = {
                     "exit_time": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     "type": "SHORT",
@@ -983,7 +991,7 @@ def live_dca_fragment():
         for idx, th, val, rsi_val, rsi_prev, div_bull in zip([0, 1, 2, 3], [nw_alt_1m_or_15m, nw_alt_5m_or_1h, nw_alt_15m_or_4h, nw_alt_1h_or_1d], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe, div_bull_per_kademe):
             nw_signal = current_price <= th and (idx == 0 or st.session_state[f"{state_prefix}l_status"][idx-1]) and not st.session_state[f"{state_prefix}l_status"][idx]
             
-            # Sakin piyasada sadece Nadaraya dikkate alınır, RSI kontrolü bypass edilir.
+            # SAKİN PİYASADA sadece Nadaraya dikkate alınır, RSI kontrolü bypass edilir.
             # Volatil piyasada ise RSI < 40 onay şartı aranır.
             rsi_confirms_long = True if not is_volatile else (rsi_val < 40)
             
@@ -1012,7 +1020,7 @@ def live_dca_fragment():
         for idx, th, val, rsi_val, rsi_prev, div_bear in zip([0, 1, 2, 3], [nw_ust_1m_or_15m, nw_ust_5m_or_1h, nw_ust_15m_or_4h, nw_ust_1h_or_1d], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe, div_bear_per_kademe):
             nw_signal = current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]
             
-            # Sakin piyasada sadece Nadaraya dikkate alınır, RSI kontrolü bypass edilir.
+            # SAKİN PİYASADA sadece Nadaraya dikkate alınır, RSI kontrolü bypass edilir.
             # Volatil piyasada ise overbought bölgesinden (70 üstü) çıkış dönüş onayı aranır.
             rsi_confirms_short = True if not is_volatile else (rsi_prev > RSI_OVERBOUGHT and rsi_val <= RSI_OVERBOUGHT)
             
@@ -1072,7 +1080,7 @@ def live_dca_fragment():
                 st.info("📈 LONG KADEMELERİ")
                 k1_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_entry_prices'][0]:.2f})" if st.session_state[f"{state_prefix}l_status"][0] else f"⏳ Bekliyor ({nw_alt_1m_or_15m:.2f})"
                 k2_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_entry_prices'][1]:.2f})" if st.session_state[f"{state_prefix}l_status"][1] else f"⏳ Bekliyor ({nw_alt_5m_or_1h:.2f})"
-                k3_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_15m_or_4h:.2f})"
+                k3_status = f"✅ Alındı ({st.session_state[f'{state_prefix}l_entry_prices'][2]:.2f})" if st.session_state[f"{state_prefix}l_status"][2] else f"⏳ Bekliyor ({nw_alt_15m_or_4h:.2f})"
                 k4_status = f"✅ Alındı" if st.session_state[f"{state_prefix}l_status"][3] else f"⏳ Bekliyor ({nw_alt_1h_or_1d:.2f})"
                 st.write(f"**{l1_lbl}:** {k1_status}")
                 st.write(f"**{l2_lbl}:** {k2_status}")
@@ -1088,7 +1096,7 @@ def live_dca_fragment():
                 st.error("📉 SHORT KADEMELERİ")
                 s_k1_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_entry_prices'][0]:.2f})" if st.session_state[f"{state_prefix}s_status"][0] else f"⏳ Bekliyor ({nw_ust_1m_or_15m:.2f})"
                 s_k2_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_entry_prices'][1]:.2f})" if st.session_state[f"{state_prefix}s_status"][1] else f"⏳ Bekliyor ({nw_ust_5m_or_1h:.2f})"
-                s_k3_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_15m_or_4h:.2f})"
+                s_k3_status = f"✅ Açıldı ({st.session_state[f'{state_prefix}s_entry_prices'][2]:.2f})" if st.session_state[f"{state_prefix}s_status"][2] else f"⏳ Bekliyor ({nw_ust_15m_or_4h:.2f})"
                 s_k4_status = f"✅ Açıldı" if st.session_state[f"{state_prefix}s_status"][3] else f"⏳ Bekliyor ({nw_ust_1h_or_1d:.2f})"
                 st.write(f"**{s1_lbl}:** {s_k1_status}")
                 st.write(f"**{s2_lbl}:** {s_k2_status}")
@@ -1172,7 +1180,7 @@ def live_dca_fragment():
             st.markdown("---")
             col_t1, col_t2 = st.columns(2)
             col_t1.metric(label="4h Genel Trend", value=trend_4h)
-            col_t2.metric(label="Pozisyon Yönü Uyarısı", value="SHORT'a Diksat" if trend_4h == "YUKARI (BOĞA)" else "LONG'a Dikkat")
+            col_t2.metric(label="Pozisyon Yönü Uyarısı", value="SHORT'a Dikkat" if trend_4h == "YUKARI (BOĞA)" else "LONG'a Dikkat")
             if trend_4h == "YUKARI (BOĞA)": st.success(f"🛡️ {warning_msg}")
             else: st.error(f"🛡️ {warning_msg}")
         
@@ -1265,17 +1273,20 @@ def check_password_fixed():
         }
         .sheep-emoji { display: inline-block; animation: sheepBounce 2.2s ease-in-out infinite; }
         
+        /* Giriş formunun daralmasını önler ve düzgün şekilde ortalar */
         div[data-testid="stForm"], 
         div[data-testid="stVerticalBlockBorderWrapper"]:has(div[data-testid="stForm"]) {
             max-width: 380px !important;
             margin: 0 auto !important;
         }
         
+        /* Streamlit form altındaki talimat yazısını tamamen gizleyerek çakışmayı önler */
         div[data-testid="InputInstructions"] {
             display: none !important;
             visibility: hidden !important;
         }
         
+        /* Input kutusuna yükseklik ve iç boşluk vererek ferahlatır */
         div[data-testid="stTextInput"] input {
             height: 48px !important;
             font-size: 15px !important;
@@ -1317,6 +1328,7 @@ def check_password_fixed():
                 st.error("❌ Hatalı Şifre! Erişim reddedildi.")
     return False
 
+# Eski check_password yerine yeni örtüşme önleyen check_password_fixed çağrılır.
 if not check_password_fixed(): st.stop()
 
 # ================= ANA PANEL ÇALIŞTIRMA VE ÇIKIŞ YAPISI =================
@@ -1324,5 +1336,6 @@ live_dca_fragment()
 with st.sidebar:
     countdown_fragment()
     st.markdown("---")
+    # Platformdan güvenli çıkış yapmayı sağlayan çıkış butonu
     if st.button("🚪 Platformdan Çıkış", key="global_logout_button", use_container_width=True, on_click=logout_callback):
         st.rerun()
