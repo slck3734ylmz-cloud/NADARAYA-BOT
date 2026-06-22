@@ -598,15 +598,23 @@ def live_dca_fragment():
         raw_k2_ust = df_k2.iloc[-2][f"NW_Ust{suf_k2}"]
         raw_k3_ust = df_k3.iloc[-2][f"NW_Ust{suf_k3}"]
 
-        # Her kademenin kendi zaman diliminin RSI değeri (filtre/onay için kullanılacak)
-        rsi_k1 = df_k1.iloc[-1]["RSI"]
-        rsi_k2 = df_k2.iloc[-1]["RSI"]
-        rsi_k3 = df_k3.iloc[-1]["RSI"]
-        # Önceki bar RSI değerleri - "dönüş" (crossover) tespiti için gerekli.
-        rsi_k1_prev = df_k1.iloc[-2]["RSI"]
-        rsi_k2_prev = df_k2.iloc[-2]["RSI"]
-        rsi_k3_prev = df_k3.iloc[-2]["RSI"]
+        # Her kademenin kendi zaman diliminin RSI değeri (filtre/onay için kullanılacak).
+        # NW bandı gibi "son kapanmış mum" (iloc[-2]) bazında hesaplanır - henüz
+        # tamamlanmamış anlık mumun RSI'sini kullanmak geçici/yanıltıcı sinyal üretebilir.
+        rsi_k1 = df_k1.iloc[-2]["RSI"]
+        rsi_k2 = df_k2.iloc[-2]["RSI"]
+        rsi_k3 = df_k3.iloc[-2]["RSI"]
+        # Önceki kapanmış bar RSI değerleri - "dönüş" (crossover) tespiti için gerekli.
+        rsi_k1_prev = df_k1.iloc[-3]["RSI"]
+        rsi_k2_prev = df_k2.iloc[-3]["RSI"]
+        rsi_k3_prev = df_k3.iloc[-3]["RSI"]
         RSI_OVERSOLD, RSI_OVERBOUGHT = 30, 70
+
+        # Iraksama (divergence) tespiti - her kademenin kendi zaman diliminde,
+        # son kapanmış mumlar üzerinden (anlık/oluşmakta olan mum hariç).
+        div_k1_bull, div_k1_bear = detect_rsi_divergence(df_k1["Kapanis"].values[:-1], df_k1["RSI"].values[:-1])
+        div_k2_bull, div_k2_bear = detect_rsi_divergence(df_k2["Kapanis"].values[:-1], df_k2["RSI"].values[:-1])
+        div_k3_bull, div_k3_bear = detect_rsi_divergence(df_k3["Kapanis"].values[:-1], df_k3["RSI"].values[:-1])
 
         k1_alt_base = raw_k1_alt
         k2_alt_base = min(raw_k2_alt, k1_alt_base * 0.997)
@@ -706,8 +714,10 @@ def live_dca_fragment():
 
         rsi_per_kademe = [rsi_k1, rsi_k2, rsi_k3]
         rsi_prev_per_kademe = [rsi_k1_prev, rsi_k2_prev, rsi_k3_prev]
+        div_bull_per_kademe = [div_k1_bull, div_k2_bull, div_k3_bull]
+        div_bear_per_kademe = [div_k1_bear, div_k2_bear, div_k3_bear]
 
-        for idx, th, val, rsi_val, rsi_prev in zip([0, 1, 2], [nw_alt_5m, nw_alt_1h, nw_alt_4h], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe):
+        for idx, th, val, rsi_val, rsi_prev, div_bull in zip([0, 1, 2], [nw_alt_5m, nw_alt_1h, nw_alt_4h], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe, div_bull_per_kademe):
             nw_signal = current_price <= th and (idx == 0 or st.session_state[f"{state_prefix}l_status"][idx-1]) and not st.session_state[f"{state_prefix}l_status"][idx]
             # RSI ONAYI: sabit eşik beklemek yerine "dönüş" aranır — RSI önceki barda
             # aşırı satım bölgesindeydi (oversold) ve şimdi 30 seviyesini yukarı kesti.
@@ -726,13 +736,14 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}l_avg_price"] = st.session_state[f"{state_prefix}l_usd_spent"] / st.session_state[f"{state_prefix}l_crypto"]
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"📈 *[{mode_tag}] LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Dönüşü: {rsi_prev:.1f} → {rsi_val:.1f} (oversold'dan çıkış){order_note}"
+                div_note = "\n🔁 Bullish Iraksama: ✅ (ekstra güven sinyali)" if div_bull else ""
+                msg = f"📈 *[{mode_tag}] LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Dönüşü: {rsi_prev:.1f} → {rsi_val:.1f} (oversold'dan çıkış){div_note}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
                 break
 
-        for idx, th, val, rsi_val, rsi_prev in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe):
+        for idx, th, val, rsi_val, rsi_prev, div_bear in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe, div_bear_per_kademe):
             nw_signal = current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]
             # RSI ONAYI: RSI önceki barda aşırı alım bölgesindeydi (overbought) ve
             # şimdi 70 seviyesini aşağı kesti — momentum tükeniş/dönüş sinyali.
@@ -750,7 +761,8 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"📈 *[{mode_tag}] SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Dönüşü: {rsi_prev:.1f} → {rsi_val:.1f} (overbought'tan çıkış){order_note}"
+                div_note = "\n🔁 Bearish Iraksama: ✅ (ekstra güven sinyali)" if div_bear else ""
+                msg = f"📈 *[{mode_tag}] SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Dönüşü: {rsi_prev:.1f} → {rsi_val:.1f} (overbought'tan çıkış){div_note}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
@@ -847,13 +859,15 @@ def live_dca_fragment():
             st.write(f"🎯 **Aktif Kademe RSI Filtreleri** ({active_engine_name})")
             st.caption(f"LONG onayı: RSI önceki barda <{RSI_OVERSOLD} idi, şimdi yukarı kesti. SHORT onayı: RSI önceki barda >{RSI_OVERBOUGHT} idi, şimdi aşağı kesti.")
             col_fa, col_fb, col_fc = st.columns(3)
-            for col, lbl, rsi_v, rsi_p in zip([col_fa, col_fb, col_fc], [l1_lbl, l2_lbl, l3_lbl], [rsi_k1, rsi_k2, rsi_k3], [rsi_k1_prev, rsi_k2_prev, rsi_k3_prev]):
+            for col, lbl, rsi_v, rsi_p, db, dbr in zip([col_fa, col_fb, col_fc], [l1_lbl, l2_lbl, l3_lbl], [rsi_k1, rsi_k2, rsi_k3], [rsi_k1_prev, rsi_k2_prev, rsi_k3_prev], div_bull_per_kademe, div_bear_per_kademe):
                 with col:
                     long_ok = "✅" if (rsi_p < RSI_OVERSOLD and rsi_v >= RSI_OVERSOLD) else "❌"
                     short_ok = "✅" if (rsi_p > RSI_OVERBOUGHT and rsi_v <= RSI_OVERBOUGHT) else "❌"
                     st.write(f"**{lbl}**")
                     st.code(f"RSI: {rsi_p:.1f} → {rsi_v:.1f}")
                     st.caption(f"LONG: {long_ok}  |  SHORT: {short_ok}")
+                    if db: st.caption("🔁 Bullish Iraksama Var")
+                    if dbr: st.caption("🔁 Bearish Iraksama Var")
 
             st.markdown("---")
             st.write("💼 **Açık Pozisyonlar**")
