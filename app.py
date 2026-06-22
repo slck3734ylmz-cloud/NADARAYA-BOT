@@ -24,6 +24,21 @@ exchange = ccxt.mexc({
 
 BOT_LEVERAGE = 200  # MEXC BTC/USDT futures için kullanılacak kaldıraç (cross margin)
 
+# ================= ZAMAN DİLİMİNE ÖZEL NW / RSI PARAMETRELERİ =================
+# Her zaman diliminin kendi "doğal" penceresine göre ayarlanmış parametreler.
+# limit       : çekilecek mum sayısı (her TF için gerçekçi bir geçmiş süreye denk gelir)
+# h           : Nadaraya-Watson bandwidth (yumuşatma derecesi)
+# rsi_period  : o zaman diliminde kullanılacak RSI periyodu
+# std_window  : NW bandı için rolling standart sapma penceresi
+TF_PARAMS = {
+    "1m":  {"limit": 90,  "h": 6, "rsi_period": 7,  "std_window": 15},
+    "5m":  {"limit": 100, "h": 7, "rsi_period": 9,  "std_window": 18},
+    "15m": {"limit": 110, "h": 8, "rsi_period": 9,  "std_window": 20},
+    "1h":  {"limit": 120, "h": 8, "rsi_period": 14, "std_window": 20},
+    "4h":  {"limit": 90,  "h": 7, "rsi_period": 14, "std_window": 18},
+    "1d":  {"limit": 60,  "h": 6, "rsi_period": 14, "std_window": 14},
+}
+
 # ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
 def check_password():
     if "password_correct" not in st.session_state:
@@ -158,10 +173,10 @@ def nadaraya_watson_estimator(src, h=8):
         estimates[i] = np.sum(src[:i+1] * weights) / np.sum(weights)
     return estimates
 
-def calculate_nw_bands(df, std_multiplier, col_suffix):
-    df["NW_Merkez"] = nadaraya_watson_estimator(df["Kapanis"].values, h=8)
+def calculate_nw_bands(df, std_multiplier, col_suffix, h=8, std_window=20):
+    df["NW_Merkez"] = nadaraya_watson_estimator(df["Kapanis"].values, h=h)
     df["Fark"] = df["Kapanis"] - df["NW_Merkez"]
-    df["Sapma_Std"] = df["Fark"].rolling(window=20).std()
+    df["Sapma_Std"] = df["Fark"].rolling(window=std_window).std()
     df[f"NW_Ust{col_suffix}"] = df["NW_Merkez"] + (std_multiplier * df["Sapma_Std"])
     df[f"NW_Alt{col_suffix}"] = df["NW_Merkez"] - (std_multiplier * df["Sapma_Std"])
     return df
@@ -483,50 +498,60 @@ def live_dca_fragment():
         current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
         price_change_24h = live_ticker.get('percentage') or 0.0
 
-        raw_1m = exchange.fetch_ohlcv(selected_symbol, "1m", limit=120)
+        p1m = TF_PARAMS["1m"]
+        raw_1m = exchange.fetch_ohlcv(selected_symbol, "1m", limit=p1m["limit"])
         df_1m = pd.DataFrame(raw_1m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_1m["Zaman"] = pd.to_datetime(df_1m["Zaman"], unit="ms")
-        df_1m = calculate_nw_bands(df_1m, 3.0, "_1m")
-        df_1m["RSI"] = calculate_rsi(df_1m["Kapanis"])
+        df_1m = calculate_nw_bands(df_1m, 3.0, "_1m", h=p1m["h"], std_window=p1m["std_window"])
+        df_1m["RSI"] = calculate_rsi(df_1m["Kapanis"], period=p1m["rsi_period"])
 
-        raw_5m = exchange.fetch_ohlcv(selected_symbol, "5m", limit=120)
+        p5m = TF_PARAMS["5m"]
+        raw_5m = exchange.fetch_ohlcv(selected_symbol, "5m", limit=p5m["limit"])
         df_5m = pd.DataFrame(raw_5m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_5m["Zaman"] = pd.to_datetime(df_5m["Zaman"], unit="ms")
-        df_5m = calculate_nw_bands(df_5m, 3.0, "_5m")
-        df_5m["RSI"] = calculate_rsi(df_5m["Kapanis"])
+        df_5m = calculate_nw_bands(df_5m, 3.0, "_5m", h=p5m["h"], std_window=p5m["std_window"])
+        df_5m["RSI"] = calculate_rsi(df_5m["Kapanis"], period=p5m["rsi_period"])
 
         # 15m verisi hem volatilite ölçümü hem de kademe hesaplaması için kullanılır,
         # tek seferde çekilir (önceden iki ayrı API çağrısı yapılıyordu).
-        raw_15m = exchange.fetch_ohlcv(selected_symbol, "15m", limit=120)
+        p15m = TF_PARAMS["15m"]
+        raw_15m = exchange.fetch_ohlcv(selected_symbol, "15m", limit=p15m["limit"])
         df_15m = pd.DataFrame(raw_15m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_15m["Zaman"] = pd.to_datetime(df_15m["Zaman"], unit="ms")
-        df_15m = calculate_nw_bands(df_15m, 3.0, "_15m")
-        df_15m["RSI"] = calculate_rsi(df_15m["Kapanis"])
+        df_15m = calculate_nw_bands(df_15m, 3.0, "_15m", h=p15m["h"], std_window=p15m["std_window"])
+        df_15m["RSI"] = calculate_rsi(df_15m["Kapanis"], period=p15m["rsi_period"])
         is_volatile = df_15m["Kapanis"].rolling(20).std().iloc[-1] > df_15m["Kapanis"].rolling(20).std().median()
         market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
-        raw_1h = exchange.fetch_ohlcv(selected_symbol, "1h", limit=120)
+        p1h = TF_PARAMS["1h"]
+        raw_1h = exchange.fetch_ohlcv(selected_symbol, "1h", limit=p1h["limit"])
         df_1h = pd.DataFrame(raw_1h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_1h["Zaman"] = pd.to_datetime(df_1h["Zaman"], unit="ms")
-        df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
-        df_1h["RSI"] = calculate_rsi(df_1h["Kapanis"])
+        df_1h = calculate_nw_bands(df_1h, 3.0, "_1h", h=p1h["h"], std_window=p1h["std_window"])
+        df_1h["RSI"] = calculate_rsi(df_1h["Kapanis"], period=p1h["rsi_period"])
 
-        # 4h verisi hem genel trend (EMA_200) hem de kademe hesaplaması için kullanılır,
-        # tek seferde çekilir (önceden iki ayrı API çağrısı yapılıyordu).
-        raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=120)
+        # 4h: NW/RSI için kısa pencere (p4h["limit"]), EMA_200 (genel trend) için ise
+        # ayrı ve daha uzun bir veri çekişi (250 mum) yapılır; EMA_200 kısa pencerede
+        # istatistiksel olarak stabilize olamaz.
+        p4h = TF_PARAMS["4h"]
+        raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=p4h["limit"])
         df_4h = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_4h["Zaman"] = pd.to_datetime(df_4h["Zaman"], unit="ms")
-        df_4h = calculate_nw_bands(df_4h, 3.0, "_4h")
-        df_4h["RSI"] = calculate_rsi(df_4h["Kapanis"])
-        df_4h["EMA_200"] = df_4h["Kapanis"].ewm(span=200, adjust=False).mean()
-        trend_4h = "YUKARI (BOĞA)" if df_4h.iloc[-1]["Kapanis"] > df_4h.iloc[-1]["EMA_200"] else "AŞAĞI (AYI)"
+        df_4h = calculate_nw_bands(df_4h, 3.0, "_4h", h=p4h["h"], std_window=p4h["std_window"])
+        df_4h["RSI"] = calculate_rsi(df_4h["Kapanis"], period=p4h["rsi_period"])
+
+        raw_4h_trend = exchange.fetch_ohlcv(selected_symbol, "4h", limit=250)
+        df_4h_trend = pd.DataFrame(raw_4h_trend, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_4h_trend["EMA_200"] = df_4h_trend["Kapanis"].ewm(span=200, adjust=False).mean()
+        trend_4h = "YUKARI (BOĞA)" if df_4h_trend.iloc[-1]["Kapanis"] > df_4h_trend.iloc[-1]["EMA_200"] else "AŞAĞI (AYI)"
         warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
 
-        raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=120)
+        p1d = TF_PARAMS["1d"]
+        raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=p1d["limit"])
         df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_1d["Zaman"] = pd.to_datetime(df_1d["Zaman"], unit="ms")
-        df_1d = calculate_nw_bands(df_1d, 3.0, "_1d")
-        df_1d["RSI"] = calculate_rsi(df_1d["Kapanis"])
+        df_1d = calculate_nw_bands(df_1d, 3.0, "_1d", h=p1d["h"], std_window=p1d["std_window"])
+        df_1d["RSI"] = calculate_rsi(df_1d["Kapanis"], period=p1d["rsi_period"])
 
         df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
         btc_funding_live = get_btc_funding_rate()
@@ -708,22 +733,22 @@ def live_dca_fragment():
             tab_1m, tab_5m, tab_15m, tab_1h, tab_4h, tab_1d = st.tabs(["⏱️ 1m", "⏱️ 5m", "⏱️ 15m", "⏱️ 1h", "⏱️ 4h", "🌎 1d"])
         
             with tab_1m:
-                df_subset = df_1m.tail(100)
+                df_subset = df_1m.tail(TF_PARAMS["1m"]["limit"])
                 st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1m", "NW_Ust_1m", f"{coin_title} - 1m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_1m")
             with tab_5m:
-                df_subset = df_5m.tail(100)
+                df_subset = df_5m.tail(TF_PARAMS["5m"]["limit"])
                 st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_5m", "NW_Ust_5m", f"{coin_title} - 5m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_5m")
             with tab_15m:
-                df_subset = df_15m.tail(100)
+                df_subset = df_15m.tail(TF_PARAMS["15m"]["limit"])
                 st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_15m", "NW_Ust_15m", f"{coin_title} - 15m Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_15m")
             with tab_1h:
-                df_subset = df_1h.tail(100)
+                df_subset = df_1h.tail(TF_PARAMS["1h"]["limit"])
                 st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1h", "NW_Ust_1h", f"{coin_title} - 1h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_1h")
             with tab_4h:
-                df_subset = df_4h.tail(100)
+                df_subset = df_4h.tail(TF_PARAMS["4h"]["limit"])
                 st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_4h", "NW_Ust_4h", f"{coin_title} - 4h Grafik", st.session_state[f'{state_prefix}l_avg_price'], st.session_state[f'{state_prefix}s_avg_price']), use_container_width=True, key=f"{state_prefix}chart_4h")
             with tab_1d:
-                df_subset = df_1d.tail(30)
+                df_subset = df_1d.tail(TF_PARAMS["1d"]["limit"])
                 st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", "NW_Alt_1d", "NW_Ust_1d", f"{coin_title} - 1d Grafik"), use_container_width=True, key=f"{state_prefix}chart_1d")
 
             st.markdown("---")
