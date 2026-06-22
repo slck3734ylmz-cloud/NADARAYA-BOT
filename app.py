@@ -526,16 +526,9 @@ def save_state_to_db():
         supabase.table("bot_state").upsert(data).execute()
     except Exception as e: st.error(f"Veritabanı kaydı başarısız: {type(e).__name__}: {str(e)[:200]}")
 
-try:
-    ticker_info = exchange.fetch_ticker(selected_symbol)
-    coin_price = ticker_info.get('last') or ticker_info.get('close') or 63000.0
-    scale = 63000.0 / coin_price
-    # Kademe miktarları BTC bazlıdır: K1=0.0001 BTC, K2=0.0004 BTC, K3=0.0012 BTC.
-    # Başka bir coin seçildiğinde, coin'in BTC'ye göre fiyat oranıyla otomatik ölçeklenir.
-    # LONG ve SHORT için tamamen aynı miktarlar kullanılır.
-    layer_sizes = [0.0001 * scale, 0.0004 * scale, 0.0012 * scale]
-except:
-    layer_sizes = [0.0001, 0.0004, 0.0012]
+# Kademe miktarları sabit BTC değerleridir (bot sadece BTC/USDT üzerinde çalışır):
+# K1=0.0001 BTC, K2=0.0004 BTC, K3=0.0012 BTC. LONG ve SHORT için aynı miktarlar kullanılır.
+layer_sizes = [0.0001, 0.0004, 0.0012]
 
 def send_telegram_msg(message):
     signed_message = f"🐉 *Kyoun*\n{message}"
@@ -615,9 +608,6 @@ if col_b2.button("🔴 Sıfırla", key="live_reset_all_positions_button", use_co
     st.session_state[f"{state_prefix}locked_prices"] = None
     save_state_to_db()
     st.rerun()
-
-countdown_placeholder = st.sidebar.empty()
-main_container = st.empty()
 
 @st.fragment(run_every="10s")
 def live_dca_fragment():
@@ -1058,7 +1048,7 @@ def live_dca_fragment():
                     s_avg = st.session_state[f"{state_prefix}s_avg_price"]
                     s_amt = st.session_state[f"{state_prefix}s_crypto"]
                     s_pnl_usd = (s_avg - current_price) * s_amt
-                    s_pnl_pct = ((s_avg / current_price) - 1) * 100 if current_price > 0 else 0.0
+                    s_pnl_pct = ((s_avg - current_price) / s_avg) * 100 if s_avg > 0 else 0.0
                     s_kademe = sum(st.session_state[f"{state_prefix}s_status"])
                     st.markdown(f"**📉 SHORT** — {s_kademe}/3 kademe açık")
                     ps1, ps2, ps3 = st.columns(3)
