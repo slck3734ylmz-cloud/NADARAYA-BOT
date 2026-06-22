@@ -44,7 +44,7 @@ def check_password():
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
     if st.session_state.password_correct: return True
-    st.markdown("<h2 style='text-align: center; color: white; margin-top: 50px;'>🔒 DCA Terminal Güvenlik Girişi</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; color: white; margin-top: 50px;'>🔒 Kyoun Terminal Güvenlik Girişi</h2>", unsafe_allow_html=True)
     col_login, _ = st.columns([1, 1.5])
     with col_login:
         user_password = st.text_input("Lütfen şahsi siber güvenlik şifrenizi girin:", type="password", key="login_pass_key_global")
@@ -57,7 +57,7 @@ def check_password():
 
 if not check_password(): st.stop()
 
-st.set_page_config(page_title="DCA Live Hedging Terminal", layout="wide")
+st.set_page_config(page_title="Kyoun | DCA Hedging Terminal", layout="wide")
 
 # ================= GELİŞMİŞ KARARMA VE DALGALANMA ÖNLEYİCİ (FLICKER-FREE CSS) =================
 st.markdown(
@@ -78,6 +78,63 @@ st.markdown(
     div[data-testid="stStatusWidget"], [data-testid="stStatusWidget"] {
         display: none !important;
         visibility: hidden !important;
+    }
+    /* ===== Tipografi tutarlılığı ===== */
+    /* st.metric değer boyutunu dengele (varsayılan çok büyük, görsel dengesizlik yaratıyor) */
+    div[data-testid="stMetricValue"] {
+        font-size: 1.4rem !important;
+    }
+    div[data-testid="stMetricLabel"] {
+        font-size: 0.78rem !important;
+        opacity: 0.75;
+    }
+    /* st.code (RSI değerleri) için sabit, okunaklı punto */
+    .stCodeBlock, .stCodeBlock code {
+        font-size: 0.82rem !important;
+        padding: 2px 6px !important;
+    }
+    /* st.caption tutarlı, küçük ama okunabilir punto */
+    [data-testid="stCaptionContainer"], .stCaption {
+        font-size: 0.75rem !important;
+    }
+    /* Sidebar genel yazı boyutu sıkışmasın, tutarlı kalsın */
+    section[data-testid="stSidebar"] p, 
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] .stMarkdown {
+        font-size: 0.85rem !important;
+    }
+    section[data-testid="stSidebar"] h2, 
+    section[data-testid="stSidebar"] h3 {
+        font-size: 1.05rem !important;
+        margin-top: 0.4rem !important;
+        margin-bottom: 0.3rem !important;
+    }
+    /* Buton yazıları tutarlı punto */
+    .stButton button, .stRadio label {
+        font-size: 0.85rem !important;
+    }
+    /* Sidebar içindeki bölümler arası boşluğu sıkılaştır (gereksiz boşluk azaltma) */
+    section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
+        gap: 0.3rem !important;
+    }
+    /* Ana panel başlıkları (subheader) tutarlı punto */
+    [data-testid="stMain"] h3 {
+        font-size: 1.1rem !important;
+        margin-top: 0.6rem !important;
+        margin-bottom: 0.3rem !important;
+    }
+    /* st.write içindeki kalın metinler (bold) çok büyük görünmesin */
+    [data-testid="stMain"] .stMarkdown p {
+        font-size: 0.88rem !important;
+        line-height: 1.4 !important;
+    }
+    /* Sidebar radio/toggle seçenekleri arası boşluk */
+    section[data-testid="stSidebar"] .stRadio > div {
+        gap: 0.15rem !important;
+    }
+    /* Expander başlığı tutarlı punto */
+    [data-testid="stExpander"] summary {
+        font-size: 0.82rem !important;
     }
     </style>
     """, 
@@ -269,19 +326,23 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
     return fig
 
 # ================= YAN PANEL AYARLARI VE NAVİGASYON =================
-st.sidebar.title("💳 Cüzdan Durumu")
-st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
+st.sidebar.markdown("## 🐉 Kyoun")
+st.sidebar.caption("BTC/USDT Futures Hedging Terminal")
+st.sidebar.markdown("---")
+st.sidebar.subheader("💳 Cüzdan Durumu")
 
 # Bot sadece BTC/USDT futures üzerinde sabit çalışır (coin seçimi kaldırıldı).
 selected_symbol = "BTC/USDT:USDT"
 coin_title = selected_symbol.split(':')[0]
 state_prefix = f"{selected_symbol}_"
-st.sidebar.markdown(f"🔥 **Sabit İşlem Çifti:** `{coin_title}`")
-st.sidebar.markdown(f"⚡ **Kaldıraç:** `{BOT_LEVERAGE}x` (Cross Margin)")
+
+col_s1, col_s2 = st.sidebar.columns(2)
+col_s1.metric("Bakiye", "$100.00")
+col_s2.metric("Kaldıraç", f"{BOT_LEVERAGE}x")
+st.sidebar.caption(f"🔥 {coin_title} · Cross Margin")
 
 # ================= YAN PANEL FONLAMA ORANI (BTC) =================
 st.sidebar.markdown("---")
-st.sidebar.subheader("💸 BTC/USDT Fonlama Oranı")
 btc_funding = get_btc_funding_rate()
 
 if "error" in btc_funding:
@@ -289,26 +350,21 @@ if "error" in btc_funding:
 elif btc_funding.get("rate") is not None:
     rate_pct = btc_funding["rate"] * 100.0
     rate_str = f"{rate_pct:+.4f}%"
-    if rate_pct < 0:
-        st.sidebar.markdown(f"**Mevcut Oran:** :green[{rate_str}]")
-        st.sidebar.caption("Negatif oran: Short'lar Long'lara ödeme yapar.")
-    else:
-        st.sidebar.markdown(f"**Mevcut Oran:** :red[{rate_str}]")
-        st.sidebar.caption("Pozitif oran: Long'lar Short'lara ödeme yapar.")
-
-    if btc_funding.get("next_rate") is not None:
-        next_pct = btc_funding["next_rate"] * 100.0
-        st.sidebar.write(f"**Tahmini Sonraki Oran:** {next_pct:+.4f}%")
-
-    if btc_funding.get("next_time"):
-        try:
-            next_dt = datetime.datetime.fromtimestamp(btc_funding["next_time"] / 1000, tz=datetime.timezone.utc)
-            st.sidebar.write(f"**Sonraki Ödeme:** {next_dt.strftime('%H:%M UTC')}")
-        except Exception:
-            pass
-
-    if btc_funding.get("mark_price"):
-        st.sidebar.caption(f"Mark Fiyat: ${btc_funding['mark_price']:,.2f}")
+    fr_color = "green" if rate_pct < 0 else "red"
+    st.sidebar.markdown(f"💸 **Fonlama Oranı:** :{fr_color}[{rate_str}]")
+    with st.sidebar.expander("Fonlama detayları"):
+        st.caption("Negatif: Short→Long öder. Pozitif: Long→Short öder.")
+        if btc_funding.get("next_rate") is not None:
+            next_pct = btc_funding["next_rate"] * 100.0
+            st.write(f"Tahmini Sonraki Oran: {next_pct:+.4f}%")
+        if btc_funding.get("next_time"):
+            try:
+                next_dt = datetime.datetime.fromtimestamp(btc_funding["next_time"] / 1000, tz=datetime.timezone.utc)
+                st.write(f"Sonraki Ödeme: {next_dt.strftime('%H:%M UTC')}")
+            except Exception:
+                pass
+        if btc_funding.get("mark_price"):
+            st.write(f"Mark Fiyat: ${btc_funding['mark_price']:,.2f}")
 else:
     st.sidebar.write("Fonlama oranı yükleniyor...")
 
@@ -411,8 +467,9 @@ except:
 
 target_profit_ratio, stop_loss_ratio = 0.01, 0.02
 def send_telegram_msg(message):
+    signed_message = f"🐉 *Kyoun*\n{message}"
     url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
-    payload = {"chat_id": telegram_chat_id, "text": message, "parse_mode": "Markdown"}
+    payload = {"chat_id": telegram_chat_id, "text": signed_message, "parse_mode": "Markdown"}
     try: requests.post(url, json=payload)
     except: pass
 
@@ -469,13 +526,14 @@ if live_trading_enabled:
 else:
     st.sidebar.success("📝 Kağıt Mod: Sinyaller hesaplanır, hiçbir gerçek emir gönderilmez.")
 
-manual_lock = st.sidebar.toggle("🔒 Bekleyen Seviyeleri Dondur (El İle)", value=False, key="live_manual_lock_toggle")
+manual_lock = st.sidebar.toggle("🔒 Bekleyen Seviyeleri Dondur", value=False, key="live_manual_lock_toggle")
 
-if st.sidebar.button("🔔 Telegram Bağlantısını Test Et", key="live_telegram_test_button_unique"):
+col_b1, col_b2 = st.sidebar.columns(2)
+if col_b1.button("🔔 Telegram Test", key="live_telegram_test_button_unique", use_container_width=True):
     send_telegram_msg(f"👋 *Bağlantı Testi:* Web siteniz üzerinden gönderilen test mesajı başarılı!")
-    st.sidebar.success("Test mesajı gönderildi!")
+    st.sidebar.success("Mesaj gönderildi!")
 
-if st.sidebar.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="live_reset_all_positions_button"):
+if col_b2.button("🔴 Sıfırla", key="live_reset_all_positions_button", use_container_width=True):
     st.session_state[f"{state_prefix}l_status"] = [False, False, False]
     st.session_state[f"{state_prefix}s_status"] = [False, False, False]
     st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
@@ -487,7 +545,6 @@ if st.sidebar.button("🔴 Tüm Kademeleri Manuel Sıfırla", key="live_reset_al
     save_state_to_db()
     st.rerun()
 
-st.sidebar.write("🔄 Sonraki Tarama İlerlemesi:")
 countdown_placeholder = st.sidebar.empty()
 main_container = st.empty()
 
@@ -572,7 +629,6 @@ def live_dca_fragment():
         df_1d["RSI"] = calculate_rsi(df_1d["Kapanis"], period=p1d["rsi_period"])
 
         df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
-        btc_funding_live = get_btc_funding_rate()
 
         # =================== DİNAMİK KADEME SİSTEMİ (Volatilite Bazlı) ===================
         # Yatay (sakin) piyasa : Kademe 1=1m, Kademe 2=5m, Kademe 3=15m
@@ -825,7 +881,7 @@ def live_dca_fragment():
                 if not df_short_liq.empty: st.table(df_short_liq.reset_index(drop=True))
 
         with col_right:
-            st.subheader(f"📊 {coin_title} Canlı Terminal")
+            st.subheader(f"📊 Kyoun · {coin_title} Canlı Terminal")
             st.caption(f"🕒 Son veri güncellemesi: {time.strftime('%H:%M:%S')}")
 
             if live_trading_enabled:
@@ -840,39 +896,34 @@ def live_dca_fragment():
             if manual_lock:
                 st.warning("🔒 SEVİYELER DONDURULDU: Kademeler el ile kilitlendi.")
             else:
-                st.success("🔓 CANLI TAKİP AKTİF: Seviyeler anlık güncelleniyor.")
+                st.success("🔓 CANLI TAKİP AKTİF")
 
-            st.write(f"Mevcut Durum: **{market_state_label}**")
-            st.write(f"Aktif Motor  : **{active_engine_name}**")
-            st.caption(f"Fiyat Oynaklığı: {'Yüksek' if price_is_volatile else 'Normal/Düşük'}  |  Hacim: {'Ortalama Üstü' if volume_confirms else 'Ortalama Altı'}")
-        
             st.markdown("---")
-            col_t1, col_t2 = st.columns([1, 1.2])
+            st.write(f"**Piyasa Durumu:** {market_state_label}")
+            st.caption(f"Aktif Motor: {active_engine_name}")
+            st.caption(f"Fiyat: {'Yüksek Oynaklık' if price_is_volatile else 'Normal/Düşük'} · Hacim: {'Ortalama Üstü' if volume_confirms else 'Ortalama Altı'}")
+
+            st.markdown("---")
+            col_t1, col_t2 = st.columns(2)
             col_t1.metric(label="4h Genel Trend", value=trend_4h)
-            if "rate" in btc_funding_live and btc_funding_live.get("rate") is not None:
-                fr_pct = btc_funding_live["rate"] * 100.0
-                col_t2.metric(label="Fonlama Oranı (BTC)", value=f"{fr_pct:+.4f}%")
-            if trend_4h == "YUKARI (BOĞA)": st.success(f"🛡️ Emniyet: {warning_msg}")
-            else: st.error(f"🛡️ Emniyet: {warning_msg}")
+            col_t2.metric(label="Pozisyon Yönü Uyarısı", value="SHORT'a Dikkat" if trend_4h == "YUKARI (BOĞA)" else "LONG'a Dikkat")
+            if trend_4h == "YUKARI (BOĞA)": st.success(f"🛡️ {warning_msg}")
+            else: st.error(f"🛡️ {warning_msg}")
         
             st.markdown("---")
-            st.write(f"🎯 **Aktif Kademe RSI Filtreleri** ({active_engine_name})")
-            st.caption(f"LONG onayı: RSI önceki barda <{RSI_OVERSOLD} idi, şimdi yukarı kesti. SHORT onayı: RSI önceki barda >{RSI_OVERBOUGHT} idi, şimdi aşağı kesti.")
+            st.write(f"🎯 **Aktif Kademe RSI Filtreleri**")
             col_fa, col_fb, col_fc = st.columns(3)
             for col, lbl, rsi_v, rsi_p, db, dbr in zip([col_fa, col_fb, col_fc], [l1_lbl, l2_lbl, l3_lbl], [rsi_k1, rsi_k2, rsi_k3], [rsi_k1_prev, rsi_k2_prev, rsi_k3_prev], div_bull_per_kademe, div_bear_per_kademe):
                 with col:
                     long_ok = "✅" if (rsi_p < RSI_OVERSOLD and rsi_v >= RSI_OVERSOLD) else "❌"
                     short_ok = "✅" if (rsi_p > RSI_OVERBOUGHT and rsi_v <= RSI_OVERBOUGHT) else "❌"
                     st.write(f"**{lbl}**")
-                    st.code(f"RSI: {rsi_p:.1f} → {rsi_v:.1f}")
-                    st.caption(f"LONG: {long_ok}  |  SHORT: {short_ok}")
+                    st.code(f"RSI: {rsi_v:.1f}")
+                    st.caption(f"L: {long_ok}  S: {short_ok}")
                     div_text = []
-                    if db: div_text.append("🟢 Bullish")
-                    if dbr: div_text.append("🔴 Bearish")
-                    if div_text:
-                        st.caption(f"🔁 Iraksama: {' / '.join(div_text)}")
-                    else:
-                        st.caption("🔁 Iraksama: Yok")
+                    if db: div_text.append("🟢")
+                    if dbr: div_text.append("🔴")
+                    st.caption(f"Iraksama: {' '.join(div_text) if div_text else '—'}")
 
             st.markdown("---")
             st.write("💼 **Açık Pozisyonlar**")
