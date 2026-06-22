@@ -532,6 +532,8 @@ if f"{state_prefix}balance_usd" not in st.session_state:
             st.session_state[f"{state_prefix}s_avg_price"] = db_data.get("s_avg_price", 0.0)
             st.session_state[f"{state_prefix}log_history"] = db_data.get("log_history") or []
             st.session_state[f"{state_prefix}trade_history"] = db_data.get("trade_history") or []
+            st.session_state[f"{state_prefix}manual_lock_db"] = db_data.get("manual_lock", False)
+            st.session_state[f"{state_prefix}locked_prices"] = db_data.get("locked_prices")
 
             st.session_state[f"{state_prefix}l_status"] = [
                 db_data.get("l_status_0", False),
@@ -572,6 +574,7 @@ if f"{state_prefix}balance_usd" not in st.session_state:
         st.session_state[f"{state_prefix}s_avg_price"] = 0.0
         st.session_state[f"{state_prefix}log_history"] = []
         st.session_state[f"{state_prefix}trade_history"] = []
+        st.session_state[f"{state_prefix}manual_lock_db"] = False
 
 if f"{state_prefix}locked_prices" not in st.session_state: 
     st.session_state[f"{state_prefix}locked_prices"] = None
@@ -600,7 +603,9 @@ def save_state_to_db():
             "s_usd_spent": st.session_state[f"{state_prefix}s_usd_spent"], 
             "s_avg_price": st.session_state[f"{state_prefix}s_avg_price"],
             "log_history": st.session_state[f"{state_prefix}log_history"],
-            "trade_history": st.session_state[f"{state_prefix}trade_history"]
+            "trade_history": st.session_state[f"{state_prefix}trade_history"],
+            "manual_lock": st.session_state.get("live_manual_lock_toggle", False),
+            "locked_prices": st.session_state.get(f"{state_prefix}locked_prices")
         }
         supabase.table("bot_state").upsert(data).execute()
     except Exception as e: st.error(f"Veritabanı kaydı başarısız: {type(e).__name__}: {str(e)[:200]}")
@@ -701,7 +706,14 @@ if live_trading_enabled:
 else:
     st.sidebar.success("📝 Kağıt Mod: Sinyaller hesaplanır, hiçbir gerçek emir gönderilmez.")
 
-manual_lock = st.sidebar.toggle("🔒 Bekleyen Seviyeleri Dondur", value=False, key="live_manual_lock_toggle")
+manual_lock = st.sidebar.toggle("🔒 Bekleyen Seviyeleri Dondur", value=st.session_state.get(f"{state_prefix}manual_lock_db", False), key="live_manual_lock_toggle")
+if manual_lock != st.session_state.get(f"{state_prefix}manual_lock_db", False):
+    # Toggle değiştirildi - kullanıcı kilidi açtı/kapattı. Kapatıldıysa kilitli
+    # fiyatlar da temizlenir (aksi halde bir sonraki açılışta eski fiyatlar kullanılır).
+    st.session_state[f"{state_prefix}manual_lock_db"] = manual_lock
+    if not manual_lock:
+        st.session_state[f"{state_prefix}locked_prices"] = None
+    save_state_to_db()
 
 col_b1, col_b2 = st.sidebar.columns(2)
 if col_b1.button("🔔 Telegram Test", key="live_telegram_test_button_unique", use_container_width=True):
@@ -889,6 +901,9 @@ def live_dca_fragment():
         if manual_lock:
             if st.session_state[f"{state_prefix}locked_prices"] is None:
                 st.session_state[f"{state_prefix}locked_prices"] = {"nw_alt_5m": nw_alt_5m, "nw_alt_1h": nw_alt_1h, "nw_alt_4h": nw_alt_4h, "nw_ust_5m": nw_ust_5m, "nw_ust_1h": nw_ust_1h, "nw_ust_4h": nw_ust_4h}
+                # Kilit ilk oluşturulduğu anda kalıcı hale getirilir - bot yeniden
+                # başlasa bile (hata, yeniden dağıtım vb.) aynı kilitli fiyatlar korunur.
+                save_state_to_db()
             nw_alt_5m, nw_alt_1h, nw_alt_4h = st.session_state[f"{state_prefix}locked_prices"]["nw_alt_5m"], st.session_state[f"{state_prefix}locked_prices"]["nw_alt_1h"], st.session_state[f"{state_prefix}locked_prices"]["nw_alt_4h"]
             nw_ust_5m, nw_ust_1h, nw_ust_4h = st.session_state[f"{state_prefix}locked_prices"]["nw_ust_5m"], st.session_state[f"{state_prefix}locked_prices"]["nw_ust_1h"], st.session_state[f"{state_prefix}locked_prices"]["nw_ust_4h"]
         else:
@@ -1194,6 +1209,20 @@ def live_dca_fragment():
 
     except Exception as e:
         st.error(f"Hata oluştu, 10s sonra tekrar denenecek: {type(e).__name__}: {str(e)[:200]}")
+        # Açık bir pozisyon varken hata oluşursa (örn. API bağlantı sorunu), bot bu süre
+        # boyunca stop-loss/kar-al kontrolü YAPAMAZ. Kullanıcıyı sadece ekran yerine
+        # Telegram üzerinden de uyarmak için ek bildirim gönderilir. Spam'i önlemek için
+        # en fazla 5 dakikada bir (300 saniye) tekrar gönderilir.
+        try:
+            l_open = sum(st.session_state.get(f"{state_prefix}l_status", [False, False, False])) > 0
+            s_open = sum(st.session_state.get(f"{state_prefix}s_status", [False, False, False])) > 0
+            if l_open or s_open:
+                last_warn = st.session_state.get(f"{state_prefix}last_error_warn_time", 0)
+                if time.time() - last_warn > 300:
+                    send_telegram_msg(f"⚠️ *BOT HATA ALDI* ({type(e).__name__})\nAçık pozisyonunuz var, bot şu an stop-loss/kar-al kontrolü yapamıyor. Lütfen MEXC hesabınızı manuel kontrol edin.\nHata: {str(e)[:150]}")
+                    st.session_state[f"{state_prefix}last_error_warn_time"] = time.time()
+        except Exception:
+            pass
         time.sleep(5)
 
 @st.fragment(run_every="1s")
