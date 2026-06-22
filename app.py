@@ -866,8 +866,13 @@ def live_dca_fragment():
                     st.write(f"**{lbl}**")
                     st.code(f"RSI: {rsi_p:.1f} → {rsi_v:.1f}")
                     st.caption(f"LONG: {long_ok}  |  SHORT: {short_ok}")
-                    if db: st.caption("🔁 Bullish Iraksama Var")
-                    if dbr: st.caption("🔁 Bearish Iraksama Var")
+                    div_text = []
+                    if db: div_text.append("🟢 Bullish")
+                    if dbr: div_text.append("🔴 Bearish")
+                    if div_text:
+                        st.caption(f"🔁 Iraksama: {' / '.join(div_text)}")
+                    else:
+                        st.caption("🔁 Iraksama: Yok")
 
             st.markdown("---")
             st.write("💼 **Açık Pozisyonlar**")
