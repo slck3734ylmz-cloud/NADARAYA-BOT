@@ -602,9 +602,13 @@ def save_state_to_db():
         supabase.table("bot_state").upsert(data).execute()
     except Exception as e: st.error(f"Veritabanı kaydı başarısız: {type(e).__name__}: {str(e)[:200]}")
 
-# Kademe miktarları sabit BTC değerleridir (bot sadece BTC/USDT üzerinde çalışır):
-# K1=0.0001 BTC, K2=0.0004 BTC, K3=0.0012 BTC. LONG ve SHORT için aynı miktarlar kullanılır.
-layer_sizes = [0.0001, 0.0004, 0.0012]
+# Kademe miktarları sabit BTC değerleridir (bot sadece BTC/USDT üzerinde çalışır).
+# ÖNEMLİ: MEXC futures'ta minimum emir miktarı 0.0001 BTC'dir (1 kontrat = 0.0001 BTC),
+# ve her emir bu birimin tam katı olmalıdır - aksi halde emir borsa tarafından reddedilir.
+# 3 kademeli, agresif artan dağılım (1:4:15 kontrat oranı): son kademe çok büyük olup
+# maliyet ortalamasını son giriş fiyatına yakın tutar. Toplam: 0.0020 BTC (20 kontrat,
+# LONG ve SHORT için aynı). K1=0.0001 (1 kontrat), K2=0.0004 (4 kontrat), K3=0.0015 (15 kontrat).
+layer_sizes = [0.0001, 0.0004, 0.0015]
 
 def send_telegram_msg(message):
     signed_message = f"🐑 *Kyoun*\n{message}"
@@ -627,6 +631,14 @@ def place_futures_order(symbol, side, amount, leverage=None, is_live=False, redu
         leverage = BOT_LEVERAGE
     if not is_live:
         return {"paper": True, "symbol": symbol, "side": side, "amount": amount, "status": "simulated"}
+
+    # MEXC futures BTC/USDT için minimum emir miktarı 0.0001 BTC'dir (1 kontrat) ve her
+    # emir bu birimin tam katı olmalıdır. Bu kurala uymayan bir miktar MEXC tarafından
+    # reddedilir - gerçek API isteği atmadan önce burada yakalanır.
+    MIN_ORDER_SIZE = 0.0001
+    contracts = amount / MIN_ORDER_SIZE
+    if amount < MIN_ORDER_SIZE or abs(contracts - round(contracts)) > 1e-6:
+        return {"paper": False, "status": "error", "error": f"Geçersiz miktar: {amount} BTC, MEXC minimum {MIN_ORDER_SIZE} BTC'nin tam katı olmalı"}
 
     try:
         params = {
@@ -803,11 +815,14 @@ def live_dca_fragment():
         rsi_k1 = df_k1.iloc[-2]["RSI"]
         rsi_k2 = df_k2.iloc[-2]["RSI"]
         rsi_k3 = df_k3.iloc[-2]["RSI"]
-        # Önceki kapanmış bar RSI değerleri - "dönüş" (crossover) tespiti için gerekli.
+        # Önceki kapanmış bar RSI değerleri - panelde "önceki → şimdiki" göstermek için saklanır.
         rsi_k1_prev = df_k1.iloc[-3]["RSI"]
         rsi_k2_prev = df_k2.iloc[-3]["RSI"]
         rsi_k3_prev = df_k3.iloc[-3]["RSI"]
-        RSI_OVERSOLD, RSI_OVERBOUGHT = 30, 70
+        # RSI orta nokta eşiği: NW bandı dokunduğu anda RSI'nin "doğru tarafta" olması
+        # yeterli kabul edilir (LONG için RSI<50, SHORT için RSI>50) - NW'nin anlık
+        # tepkisine RSI'nin dipten/tepeden dönüşünü beklemeden ayak uydurmak için.
+        RSI_MIDPOINT = 50
 
         # Her kademenin kendi zaman diliminin ATR değeri - kar-al/stop-loss mesafelerini
         # piyasanın o anki gerçek oynaklığına göre ölçeklemek için kullanılır.
@@ -938,12 +953,13 @@ def live_dca_fragment():
 
         for idx, th, val, rsi_val, rsi_prev, div_bull in zip([0, 1, 2], [nw_alt_5m, nw_alt_1h, nw_alt_4h], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe, div_bull_per_kademe):
             nw_signal = current_price <= th and (idx == 0 or st.session_state[f"{state_prefix}l_status"][idx-1]) and not st.session_state[f"{state_prefix}l_status"][idx]
-            # RSI ONAYI: sabit eşik beklemek yerine "dönüş" aranır — RSI önceki barda
-            # aşırı satım bölgesindeydi (oversold) ve şimdi 30 seviyesini yukarı kesti.
-            # Bu, sadece anlık RSI<30 olmasını beklemekten daha güvenilir bir momentum dönüş sinyalidir.
-            rsi_confirms_long = rsi_prev < RSI_OVERSOLD and rsi_val >= RSI_OVERSOLD
+            # RSI ONAYI: NW bandı dokunduğu anda RSI'nin "doğru tarafta" (düşüş/zayıf
+            # momentum tarafında, RSI<50) olması yeterlidir. Önceden RSI'nin önce aşırı
+            # satım bölgesine inip sonra dönmesini bekliyorduk - bu, NW'nin anlık tepkisine
+            # kıyasla RSI'yi gecikmeli kıldığı için çok fazla sinyal kaçırılmasına yol açıyordu.
+            rsi_confirms_long = rsi_val < RSI_MIDPOINT
             if nw_signal and not rsi_confirms_long:
-                # NW sinyali var ama RSI henüz oversold'dan dönmedi -> onay yok, alım yapılmaz.
+                # NW sinyali var ama RSI hâlâ momentumun güçlü/yukarı tarafında -> onay yok.
                 continue
             if nw_signal:
                 order_result = place_futures_order(selected_symbol, "buy", val, is_live=live_trading_enabled)
@@ -956,7 +972,7 @@ def live_dca_fragment():
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
                 div_note = "\n🔁 Bullish Iraksama: ✅ (ekstra güven sinyali)" if div_bull else ""
-                msg = f"📈 *[{mode_tag}] LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Dönüşü: {rsi_prev:.1f} → {rsi_val:.1f} (oversold'dan çıkış){div_note}{order_note}"
+                msg = f"📈 *[{mode_tag}] LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Onayı: {rsi_val:.1f} (<{RSI_MIDPOINT}){div_note}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
@@ -964,11 +980,11 @@ def live_dca_fragment():
 
         for idx, th, val, rsi_val, rsi_prev, div_bear in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe, div_bear_per_kademe):
             nw_signal = current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]
-            # RSI ONAYI: RSI önceki barda aşırı alım bölgesindeydi (overbought) ve
-            # şimdi 70 seviyesini aşağı kesti — momentum tükeniş/dönüş sinyali.
-            rsi_confirms_short = rsi_prev > RSI_OVERBOUGHT and rsi_val <= RSI_OVERBOUGHT
+            # RSI ONAYI: NW bandı dokunduğu anda RSI'nin "doğru tarafta" (yükseliş/güçlü
+            # momentum tarafında, RSI>50) olması yeterlidir.
+            rsi_confirms_short = rsi_val > RSI_MIDPOINT
             if nw_signal and not rsi_confirms_short:
-                # NW sinyali var ama RSI henüz overbought'tan dönmedi -> onay yok, alım yapılmaz.
+                # NW sinyali var ama RSI hâlâ momentumun zayıf/aşağı tarafında -> onay yok.
                 continue
             if nw_signal:
                 order_result = place_futures_order(selected_symbol, "sell", val, is_live=live_trading_enabled)
@@ -981,7 +997,7 @@ def live_dca_fragment():
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
                 div_note = "\n🔁 Bearish Iraksama: ✅ (ekstra güven sinyali)" if div_bear else ""
-                msg = f"📈 *[{mode_tag}] SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Dönüşü: {rsi_prev:.1f} → {rsi_val:.1f} (overbought'tan çıkış){div_note}{order_note}"
+                msg = f"📈 *[{mode_tag}] SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Onayı: {rsi_val:.1f} (>{RSI_MIDPOINT}){div_note}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
@@ -1086,12 +1102,12 @@ def live_dca_fragment():
             else: st.error(f"🛡️ {warning_msg}")
         
             st.markdown("---")
-            st.write(f"🎯 **Aktif Kademe RSI Filtreleri**")
+            st.write(f"🎯 **Aktif Kademe RSI Filtreleri** (eşik: {RSI_MIDPOINT})")
             col_fa, col_fb, col_fc = st.columns(3)
             for col, lbl, rsi_v, rsi_p, db, dbr in zip([col_fa, col_fb, col_fc], [l1_lbl, l2_lbl, l3_lbl], [rsi_k1, rsi_k2, rsi_k3], [rsi_k1_prev, rsi_k2_prev, rsi_k3_prev], div_bull_per_kademe, div_bear_per_kademe):
                 with col:
-                    long_ok = "✅" if (rsi_p < RSI_OVERSOLD and rsi_v >= RSI_OVERSOLD) else "❌"
-                    short_ok = "✅" if (rsi_p > RSI_OVERBOUGHT and rsi_v <= RSI_OVERBOUGHT) else "❌"
+                    long_ok = "✅" if rsi_v < RSI_MIDPOINT else "❌"
+                    short_ok = "✅" if rsi_v > RSI_MIDPOINT else "❌"
                     st.write(f"**{lbl}**")
                     st.code(f"RSI: {rsi_v:.1f}")
                     st.caption(f"L: {long_ok}  S: {short_ok}")
