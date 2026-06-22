@@ -10,7 +10,18 @@ import plotly.graph_objects as go
 from supabase import create_client, Client
 
 # ================= EN BAŞTA BORSA NESNESİNİN TANIMLANMASI =================
-exchange = ccxt.gate({'options': {'defaultType': 'swap'}})
+# MEXC Futures (Vadeli) bağlantısı. API key/secret st.secrets üzerinden okunur,
+# kod içine asla yazılmaz. Anahtarlar olmadan da fiyat/grafik verisi okunabilir;
+# sadece gerçek emir gönderme (canlı mod) ve bakiye sorgulama için gereklidir.
+MEXC_API_KEY = st.secrets.get("MEXC_API_KEY", "")
+MEXC_API_SECRET = st.secrets.get("MEXC_API_SECRET", "")
+
+exchange = ccxt.mexc({
+    'apiKey': MEXC_API_KEY,
+    'secret': MEXC_API_SECRET,
+    'enableRateLimit': True,
+    'options': {'defaultType': 'swap'}  # MEXC Futures/Vadeli (USDT-M) modu
+})
 
 # ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
 def check_password():
@@ -382,7 +393,56 @@ def send_telegram_msg(message):
     try: requests.post(url, json=payload)
     except: pass
 
+def place_futures_order(symbol, side, amount, leverage=1, is_live=False, reduce_only=False):
+    """
+    MEXC Futures (vadeli) emir gönderme yardımcı fonksiyonu.
+    - is_live=False (Kağıt Mod): Hiçbir gerçek emir göndermez, sadece sonucu simüle edip
+      başarı durumu döner. Sinyal/log/Telegram akışı normal şekilde devam eder.
+    - is_live=True (Canlı Mod): MEXC'e gerçek bir piyasa emri gönderir.
+    side: 'buy' (long aç/short kapat) veya 'sell' (short aç/long kapat)
+    reduce_only: pozisyon kapatma (stop-loss/kar-al) emirlerinde True gönderilir.
+    """
+    if not is_live:
+        return {"paper": True, "symbol": symbol, "side": side, "amount": amount, "status": "simulated"}
+
+    try:
+        params = {
+            "leverage": leverage,
+            "marginMode": "isolated",
+        }
+        if reduce_only:
+            params["reduceOnly"] = True
+        order = exchange.create_order(symbol, "market", side, amount, None, params)
+        return {"paper": False, "status": "success", "order": order}
+    except Exception as e:
+        return {"paper": False, "status": "error", "error": f"{type(e).__name__}: {str(e)[:200]}"}
+
 # ================= MASAÜSTÜ CANLI DCA TERMINALİ =================
+st.sidebar.markdown("---")
+st.sidebar.subheader("⚙️ İşlem Modu (MEXC Futures)")
+
+api_keys_present = bool(MEXC_API_KEY and MEXC_API_SECRET)
+if not api_keys_present:
+    st.sidebar.warning("⚠️ MEXC API anahtarı tanımlı değil. Sadece Kağıt Mod kullanılabilir.")
+
+trading_mode = st.sidebar.radio(
+    "Mod Seçimi",
+    options=["📝 Kağıt Mod (Emir Gönderilmez)", "🔴 CANLI MOD (Gerçek Emir Gönderilir)"],
+    index=0,
+    key="trading_mode_radio",
+    disabled=not api_keys_present
+)
+live_trading_enabled = trading_mode.startswith("🔴") and api_keys_present
+
+if live_trading_enabled:
+    st.sidebar.error("🔴 CANLI MOD AKTİF — Bu bot gerçek MEXC futures hesabınızda gerçek emir gönderecek!")
+    live_confirm = st.sidebar.checkbox("Riskleri anladım, gerçek emir gönderilmesini onaylıyorum", key="live_trading_confirm_checkbox")
+    if not live_confirm:
+        live_trading_enabled = False
+        st.sidebar.info("Onay kutusu işaretlenmeden canlı emir gönderilmeyecek (kağıt mod gibi çalışır).")
+else:
+    st.sidebar.success("📝 Kağıt Mod: Sinyaller hesaplanır, hiçbir gerçek emir gönderilmez.")
+
 manual_lock = st.sidebar.toggle("🔒 Bekleyen Seviyeleri Dondur (El İle)", value=False, key="live_manual_lock_toggle")
 
 if st.sidebar.button("🔔 Telegram Bağlantısını Test Et", key="live_telegram_test_button_unique"):
@@ -503,8 +563,11 @@ def live_dca_fragment():
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
             l_tp = st.session_state[f"{state_prefix}l_avg_price"] * (1 + target_profit_ratio)
             if st.session_state[f"{state_prefix}l_status"][2] and current_price <= (nw_alt_4h * (1 - stop_loss_ratio)):
+                order_result = place_futures_order(selected_symbol, "sell", st.session_state[f"{state_prefix}l_crypto"], is_live=live_trading_enabled, reduce_only=True)
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                msg = f"🔴 *LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
+                mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
+                order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+                msg = f"🔴 *[{mode_tag}] LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
@@ -512,8 +575,11 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
                 save_state_to_db()
             elif current_price >= l_tp:
+                order_result = place_futures_order(selected_symbol, "sell", st.session_state[f"{state_prefix}l_crypto"], is_live=live_trading_enabled, reduce_only=True)
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
-                msg = f"🟢 *LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}"
+                mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
+                order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+                msg = f"🟢 *[{mode_tag}] LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nSatış: {current_price:.2f}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
@@ -525,9 +591,12 @@ def live_dca_fragment():
             s_stop = st.session_state[f"{state_prefix}s_avg_price"] * (1 + stop_loss_ratio)
             s_tp = st.session_state[f"{state_prefix}s_avg_price"] * (1 - target_profit_ratio)
             if st.session_state[f"{state_prefix}s_status"][2] and current_price >= s_stop:
+                order_result = place_futures_order(selected_symbol, "buy", st.session_state[f"{state_prefix}s_crypto"], is_live=live_trading_enabled, reduce_only=True)
                 pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
-                msg = f"🔴 *SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
+                mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
+                order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+                msg = f"🔴 *[{mode_tag}] SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
@@ -535,9 +604,12 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}s_entry_prices"] = [0.0, 0.0, 0.0]
                 save_state_to_db()
             elif current_price <= s_tp:
+                order_result = place_futures_order(selected_symbol, "buy", st.session_state[f"{state_prefix}s_crypto"], is_live=live_trading_enabled, reduce_only=True)
                 pnl = (st.session_state[f"{state_prefix}s_avg_price"] - current_price) / st.session_state[f"{state_prefix}s_avg_price"]
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
-                msg = f"🟢 *SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}"
+                mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
+                order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+                msg = f"🟢 *[{mode_tag}] SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nKapanış: {current_price:.2f}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
@@ -547,13 +619,16 @@ def live_dca_fragment():
 
         for idx, th, val in zip([0, 1, 2], [nw_alt_5m, nw_alt_1h, nw_alt_4h], layer_sizes):
             if current_price <= th and (idx == 0 or st.session_state[f"{state_prefix}l_status"][idx-1]) and not st.session_state[f"{state_prefix}l_status"][idx]:
+                order_result = place_futures_order(selected_symbol, "buy", val, is_live=live_trading_enabled)
                 st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
                 st.session_state[f"{state_prefix}l_crypto"] += val
                 st.session_state[f"{state_prefix}l_usd_spent"] += val * current_price
                 st.session_state[f"{state_prefix}l_status"][idx] = True
                 st.session_state[f"{state_prefix}l_entry_prices"][idx] = current_price
                 st.session_state[f"{state_prefix}l_avg_price"] = st.session_state[f"{state_prefix}l_usd_spent"] / st.session_state[f"{state_prefix}l_crypto"]
-                msg = f"📈 *LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
+                mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
+                order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+                msg = f"📈 *[{mode_tag}] LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
@@ -561,13 +636,16 @@ def live_dca_fragment():
 
         for idx, th, val in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes):
             if current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]:
+                order_result = place_futures_order(selected_symbol, "sell", val, is_live=live_trading_enabled)
                 st.session_state[f"{state_prefix}balance_usd"] -= val * current_price
                 st.session_state[f"{state_prefix}s_crypto"] += val
                 st.session_state[f"{state_prefix}s_usd_spent"] += val * current_price
                 st.session_state[f"{state_prefix}s_status"][idx] = True
                 st.session_state[f"{state_prefix}s_entry_prices"][idx] = current_price
                 st.session_state[f"{state_prefix}s_avg_price"] = st.session_state[f"{state_prefix}s_usd_spent"] / st.session_state[f"{state_prefix}s_crypto"]
-                msg = f"📈 *SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}"
+                mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
+                order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+                msg = f"📈 *[{mode_tag}] SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
@@ -632,6 +710,12 @@ def live_dca_fragment():
         with col_right:
             st.subheader(f"📊 {coin_title} Canlı Terminal")
             st.caption(f"🕒 Son veri güncellemesi: {time.strftime('%H:%M:%S')}")
+
+            if live_trading_enabled:
+                st.error("🔴 CANLI MOD: Sinyaller gerçek MEXC futures emri olarak gönderiliyor!")
+            else:
+                st.info("📝 KAĞIT MOD: Sinyaller simüle ediliyor, gerçek emir gönderilmiyor.")
+
             col_live_p, col_live_c = st.columns(2)
             col_live_p.metric(label="Anlık Fiyat (USDT)", value=f"${current_price:,.2f}")
             col_live_c.metric(label="24 Saatlik Değişim", value=f"{price_change_24h:+.2f}%")
