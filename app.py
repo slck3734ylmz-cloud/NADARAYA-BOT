@@ -786,7 +786,7 @@ if col_b2.button("🔴 Sıfırla", key="live_reset_all_positions_button", use_co
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 Strateji Modu")
 
-dca_has_position = sum(st.session_state[f"{state_prefix}l_status"]) > 0 or sum(st.session_state[f"{state_prefix}s_status"]) > 0
+dca_has_position = sum(st.session_state.get(f"{state_prefix}l_status", [False, False, False])) > 0 or sum(st.session_state.get(f"{state_prefix}s_status", [False, False, False])) > 0
 scalp_has_position = st.session_state.get(f"{state_prefix}scalp_active", False)
 
 if dca_has_position:
@@ -1339,13 +1339,13 @@ def scalp_fragment():
         scale_factor = scalp_tp_distance / raw_tp_distance if raw_tp_distance > 0 else 1.0
         scalp_sl_distance = SCALP_SL_MULT * atr_5m * scale_factor
 
-        scalp_active = st.session_state[f"{state_prefix}scalp_active"]
-        scalp_direction = st.session_state[f"{state_prefix}scalp_direction"]
+        scalp_active = st.session_state.get(f"{state_prefix}scalp_active", False)
+        scalp_direction = st.session_state.get(f"{state_prefix}scalp_direction")
 
         # --- ÇIKIŞ KONTROLÜ (pozisyon açıksa) ---
         if scalp_active:
-            entry = st.session_state[f"{state_prefix}scalp_entry_price"]
-            amt = st.session_state[f"{state_prefix}scalp_crypto"]
+            entry = st.session_state.get(f"{state_prefix}scalp_entry_price", 0.0)
+            amt = st.session_state.get(f"{state_prefix}scalp_crypto", 0.0)
             if scalp_direction == "LONG":
                 tp = entry + scalp_tp_distance
                 sl = entry - scalp_sl_distance
@@ -1415,8 +1415,8 @@ def scalp_fragment():
         col_sc3.metric("5m ATR", f"${atr_5m:.2f}")
 
         if scalp_active:
-            entry = st.session_state[f"{state_prefix}scalp_entry_price"]
-            amt = st.session_state[f"{state_prefix}scalp_crypto"]
+            entry = st.session_state.get(f"{state_prefix}scalp_entry_price", 0.0)
+            amt = st.session_state.get(f"{state_prefix}scalp_crypto", 0.0)
             live_pnl = (current_price - entry) * amt if scalp_direction == "LONG" else (entry - current_price) * amt
             st.info(f"**{scalp_direction} Açık** — Giriş: ${entry:,.2f} · Miktar: {amt:.6f} BTC")
             col_sp1, col_sp2 = st.columns(2)
