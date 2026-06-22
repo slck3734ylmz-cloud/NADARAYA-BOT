@@ -24,6 +24,12 @@ exchange = ccxt.mexc({
 
 BOT_LEVERAGE = 200  # MEXC BTC/USDT futures için kullanılacak kaldıraç (cross margin)
 
+# MEXC USDT-M futures taker komisyon oranı (market emirleri her zaman taker sayılır).
+# Komisyon, MARJİN üzerinden değil POZİSYON DEĞERİ üzerinden kesilir - kaldıraç arttıkça
+# marjine oranla komisyon etkisi de büyür. Round-trip (aç+kapat) = 2x bu oran.
+MEXC_TAKER_FEE_PCT = 0.0002  # %0.02
+MIN_PROFIT_SAFETY_MULT = 3.0  # Kar-al mesafesi, round-trip komisyonun en az bu katı olmalı
+
 # ================= ZAMAN DİLİMİNE ÖZEL NW / RSI PARAMETRELERİ =================
 # Her zaman diliminin kendi "doğal" penceresine göre ayarlanmış parametreler.
 # limit       : çekilecek mum sayısı (her TF için gerçekçi bir geçmiş süreye denk gelir)
@@ -745,6 +751,15 @@ def live_dca_fragment():
         atr_k3 = df_k3.iloc[-2]["ATR"]
         ATR_TP_MULT, ATR_SL_MULT = 1.0, 1.5
 
+        # KOMİSYON GÜVENLİĞİ: ATR çok küçükse (sakin piyasa), 1x ATR mesafesi MEXC'in
+        # round-trip taker komisyonunu (%0.04) bile karşılamayabilir - bu durumda
+        # "kar-al" tetiklendiğinde komisyon kesintisi sonrası gerçekte ZARAR edilir.
+        # Bu yüzden kar-al mesafesi her zaman round-trip komisyonun en az
+        # MIN_PROFIT_SAFETY_MULT katı olacak şekilde garanti edilir.
+        round_trip_fee_pct = 2 * MEXC_TAKER_FEE_PCT
+        min_tp_distance = current_price * round_trip_fee_pct * MIN_PROFIT_SAFETY_MULT
+        atr_tp_distance = max(ATR_TP_MULT * atr_k3, min_tp_distance)
+
         # Iraksama (divergence) tespiti - her kademenin kendi zaman diliminde,
         # son kapanmış mumlar üzerinden (anlık/oluşmakta olan mum hariç).
         div_k1_bull, div_k1_bear = detect_rsi_divergence(df_k1["Kapanis"].values[:-1], df_k1["RSI"].values[:-1])
@@ -777,7 +792,7 @@ def live_dca_fragment():
 
         if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
             l_avg_price = st.session_state[f"{state_prefix}l_avg_price"]
-            l_tp = l_avg_price + (ATR_TP_MULT * atr_k3)
+            l_tp = l_avg_price + atr_tp_distance
             l_sl = l_avg_price - (ATR_SL_MULT * atr_k3)
             if st.session_state[f"{state_prefix}l_status"][2] and current_price <= l_sl:
                 order_result = place_futures_order(selected_symbol, "sell", st.session_state[f"{state_prefix}l_crypto"], is_live=live_trading_enabled, reduce_only=True)
@@ -804,7 +819,7 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}l_crypto"] * current_price
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"🟢 *[{mode_tag}] LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {l_avg_for_msg:.2f}\nSatış: {current_price:.2f}\nKapatılan Miktar: {l_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nATR Mesafe: {ATR_TP_MULT}x{atr_k3:.2f}\nK/Z: {l_pnl_usd:+.2f} USDT ({l_pnl_pct:+.2f}%){order_note}"
+                msg = f"🟢 *[{mode_tag}] LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {l_avg_for_msg:.2f}\nSatış: {current_price:.2f}\nKapatılan Miktar: {l_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nKar-Al Mesafesi: {atr_tp_distance:.2f}\nK/Z: {l_pnl_usd:+.2f} USDT ({l_pnl_pct:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
@@ -816,7 +831,7 @@ def live_dca_fragment():
         if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
             s_avg_price = st.session_state[f"{state_prefix}s_avg_price"]
             s_stop = s_avg_price + (ATR_SL_MULT * atr_k3)
-            s_tp = s_avg_price - (ATR_TP_MULT * atr_k3)
+            s_tp = s_avg_price - atr_tp_distance
             if st.session_state[f"{state_prefix}s_status"][2] and current_price >= s_stop:
                 order_result = place_futures_order(selected_symbol, "buy", st.session_state[f"{state_prefix}s_crypto"], is_live=live_trading_enabled, reduce_only=True)
                 s_avg_for_msg = st.session_state[f"{state_prefix}s_avg_price"]
@@ -842,7 +857,7 @@ def live_dca_fragment():
                 st.session_state[f"{state_prefix}balance_usd"] += st.session_state[f"{state_prefix}s_usd_spent"] * (1 + pnl)
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                msg = f"🟢 *[{mode_tag}] SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {s_avg_for_msg:.2f}\nKapanış: {current_price:.2f}\nKapatılan Miktar: {s_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nATR Mesafe: {ATR_TP_MULT}x{atr_k3:.2f}\nK/Z: {s_pnl_usd:+.2f} USDT ({pnl*100:+.2f}%){order_note}"
+                msg = f"🟢 *[{mode_tag}] SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {s_avg_for_msg:.2f}\nKapanış: {current_price:.2f}\nKapatılan Miktar: {s_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nKar-Al Mesafesi: {atr_tp_distance:.2f}\nK/Z: {s_pnl_usd:+.2f} USDT ({pnl*100:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
@@ -933,7 +948,9 @@ def live_dca_fragment():
 
             st.markdown("---")
             st.write("🎯 **Canlı Sinyal DCA Yönetim Kartı**")
-            st.caption(f"Kar-Al: {ATR_TP_MULT}x ATR · Stop-Loss: {ATR_SL_MULT}x ATR (Kademe 3 zaman dilimi, ATR: {atr_k3:.2f})")
+            fee_protected = atr_tp_distance > (ATR_TP_MULT * atr_k3)
+            tp_note = " (komisyon koruması devrede)" if fee_protected else ""
+            st.caption(f"Kar-Al: {atr_tp_distance:.2f} mesafe{tp_note} · Stop-Loss: {ATR_SL_MULT}x ATR (Kademe 3, ATR: {atr_k3:.2f})")
             col_l, col_s = st.columns(2)
             with col_l:
                 st.info("📈 LONG KADEMELERİ")
@@ -943,7 +960,7 @@ def live_dca_fragment():
                 st.write(f"**{l1_lbl}:** {k1_status}"); st.write(f"**{l2_lbl}:** {k2_status}"); st.write(f"**{l3_lbl}:** {k3_status}")
                 if sum(st.session_state[f"{state_prefix}l_status"]) > 0:
                     l_avg_disp = st.session_state[f'{state_prefix}l_avg_price']
-                    st.success(f"🟢 **KAR-AL:** `{l_avg_disp + (ATR_TP_MULT * atr_k3):.2f}`")
+                    st.success(f"🟢 **KAR-AL:** `{l_avg_disp + atr_tp_distance:.2f}`")
                     if st.session_state[f"{state_prefix}l_status"][2]:
                         st.error(f"🔴 **STOP-LOSS:** `{l_avg_disp - (ATR_SL_MULT * atr_k3):.2f}`")
 
@@ -955,7 +972,7 @@ def live_dca_fragment():
                 st.write(f"**{s1_lbl}:** {s_k1_status}"); st.write(f"**{s2_lbl}:** {s_k2_status}"); st.write(f"**{s3_lbl}:** {s_k3_status}")
                 if sum(st.session_state[f"{state_prefix}s_status"]) > 0:
                     s_avg_disp = st.session_state[f'{state_prefix}s_avg_price']
-                    st.success(f"🟢 **KAR-AL:** `{s_avg_disp - (ATR_TP_MULT * atr_k3):.2f}`")
+                    st.success(f"🟢 **KAR-AL:** `{s_avg_disp - atr_tp_distance:.2f}`")
                     if st.session_state[f"{state_prefix}s_status"][2]:
                         st.error(f"🔴 **STOP-LOSS:** `{s_avg_disp + (ATR_SL_MULT * atr_k3):.2f}`")
 
