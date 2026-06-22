@@ -1007,14 +1007,16 @@ def live_dca_fragment():
         div_bull_per_kademe = [div_k1_bull, div_k2_bull, div_k3_bull]
         div_bear_per_kademe = [div_k1_bear, div_k2_bear, div_k3_bear]
 
-        # ================= LONG ALIM DÖNGÜSÜ (RSI < 40 YETERLİ) =================
+        # ================= LONG ALIM DÖNGÜSÜ (RSI < 40 / SAKİN PİYASADA PASİF) =================
         for idx, th, val, rsi_val, rsi_prev, div_bull in zip([0, 1, 2], [nw_alt_5m, nw_alt_1h, nw_alt_4h], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe, div_bull_per_kademe):
             nw_signal = current_price <= th and (idx == 0 or st.session_state[f"{state_prefix}l_status"][idx-1]) and not st.session_state[f"{state_prefix}l_status"][idx]
             
-            # Dönüş beklemeden sadece o anki RSI değerinin 40'ın altında olması yeterlidir
-            rsi_confirms_long = rsi_val < 40
+            # SAKİN PİYASADA sadece Nadaraya dikkate alınır, RSI kontrolü bypass edilir.
+            # Volatil piyasada ise RSI < 40 onay şartı aranır.
+            rsi_confirms_long = True if not is_volatile else (rsi_val < 40)
+            
             if nw_signal and not rsi_confirms_long:
-                # NW sinyali var ama RSI henüz 40'ın altına inmedi -> onay yok, alım yapılmaz.
+                # NW sinyali var ama volatil piyasada RSI henüz 40'ın altına inmedi -> onay yok, alım yapılmaz.
                 continue
             if nw_signal:
                 order_result = place_futures_order(selected_symbol, "buy", val, is_live=live_trading_enabled)
@@ -1029,20 +1031,23 @@ def live_dca_fragment():
                 div_note = "\n🔁 Bullish Iraksama: ✅ (ekstra güven sinyali)" if div_bull else ""
                 
                 # Mesaj güncellenerek yeni onay mekanizmasını yansıtır
-                msg = f"📈 *[{mode_tag}] LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI: {rsi_val:.1f} (<40 onaylı){div_note}{order_note}"
+                rsi_status_text = "Devre Dışı (Sakin Piyasa)" if not is_volatile else f"{rsi_val:.1f} (<40 onaylı)"
+                msg = f"📈 *[{mode_tag}] LONG K{idx+1} SATIN ALINDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI: {rsi_info if 'rsi_info' in locals() else rsi_status_text}{div_note}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
                 break
 
-        # ================= SHORT GİRİŞ DÖNGÜSÜ (RSI ONAYI DEVREDE) =================
+        # ================= SHORT GİRİŞ DÖNGÜSÜ (RSI ONAYI / SAKİN PİYASADA PASİF) =================
         for idx, th, val, rsi_val, rsi_prev, div_bear in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe, div_bear_per_kademe):
             nw_signal = current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]
             
-            # SHORT için overbought bölgesinden (70 üstü) çıkış dönüş onayı aynen korunmuştur.
-            rsi_confirms_short = rsi_prev > RSI_OVERBOUGHT and rsi_val <= RSI_OVERBOUGHT
+            # SAKİN PİYASADA sadece Nadaraya dikkate alınır, RSI kontrolü bypass edilir.
+            # Volatil piyasada ise overbought bölgesinden (70 üstü) çıkış dönüş onayı aranır.
+            rsi_confirms_short = True if not is_volatile else (rsi_prev > RSI_OVERBOUGHT and rsi_val <= RSI_OVERBOUGHT)
+            
             if nw_signal and not rsi_confirms_short:
-                # NW sinyali var ama RSI henüz overbought'tan dönmedi -> onay yok, alım yapılmaz.
+                # NW sinyali var ama volatil piyasada RSI henüz overbought'tan dönmedi -> onay yok, alım yapılmaz.
                 continue
             if nw_signal:
                 order_result = place_futures_order(selected_symbol, "sell", val, is_live=live_trading_enabled)
@@ -1055,7 +1060,9 @@ def live_dca_fragment():
                 mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
                 order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
                 div_note = "\n🔁 Bearish Iraksama: ✅ (ekstra güven sinyali)" if div_bear else ""
-                msg = f"📈 *[{mode_tag}] SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Dönüşü: {rsi_prev:.1f} → {rsi_val:.1f} (overbought'tan çıkış){div_note}{order_note}"
+                
+                rsi_status_text = "Devre Dışı (Sakin Piyasa)" if not is_volatile else f"{rsi_prev:.1f} → {rsi_val:.1f} (overbought'tan çıkış)"
+                msg = f"📈 *[{mode_tag}] SHORT K{idx+1} AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} {coin_title.split('/')[0]}\nRSI Dönüşü: {rsi_info if 'rsi_info' in locals() else rsi_status_text}{div_note}{order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
                 save_state_to_db()
@@ -1200,12 +1207,17 @@ def live_dca_fragment():
             col_fa, col_fb, col_fc = st.columns(3)
             for col, lbl, rsi_v, rsi_p, db, dbr in zip([col_fa, col_fb, col_fc], [l1_lbl, l2_lbl, l3_lbl], [rsi_k1, rsi_k2, rsi_k3], [rsi_k1_prev, rsi_k2_prev, rsi_k3_prev], div_bull_per_kademe, div_bear_per_kademe):
                 with col:
-                    # Long (Alış) için RSI < 40 filtresi kontrol edilir
-                    long_ok = "✅" if rsi_v < 40 else "❌"
-                    short_ok = "✅" if (rsi_p > RSI_OVERBOUGHT and rsi_v <= RSI_OVERBOUGHT) else "❌"
+                    # Sakin piyasada indicators are ignored / bypass edilir
+                    if not is_volatile:
+                        long_ok = "Devre Dışı"
+                        short_ok = "Devre Dışı"
+                    else:
+                        long_ok = "✅" if rsi_v < 40 else "❌"
+                        short_ok = "✅" if (rsi_p > RSI_OVERBOUGHT and rsi_v <= RSI_OVERBOUGHT) else "❌"
+                        
                     st.write(f"**{lbl}**")
                     st.code(f"RSI: {rsi_v:.1f}")
-                    st.caption(f"L (<40): {long_ok}  S: {short_ok}")
+                    st.caption(f"L: {long_ok}  S: {short_ok}")
                     div_text = []
                     if db: div_text.append("🟢")
                     if dbr: div_text.append("🔴")
