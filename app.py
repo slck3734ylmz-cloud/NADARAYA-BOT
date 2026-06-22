@@ -382,9 +382,12 @@ try:
     ticker_info = exchange.fetch_ticker(selected_symbol)
     coin_price = ticker_info.get('last') or ticker_info.get('close') or 63000.0
     scale = 63000.0 / coin_price
-    layer_sizes = [0.0001 * scale, 0.0002 * scale, 0.0012 * scale]
+    # Kademe miktarları BTC bazlıdır: K1=0.0001 BTC, K2=0.0004 BTC, K3=0.0012 BTC.
+    # Başka bir coin seçildiğinde, coin'in BTC'ye göre fiyat oranıyla otomatik ölçeklenir.
+    # LONG ve SHORT için tamamen aynı miktarlar kullanılır.
+    layer_sizes = [0.0001 * scale, 0.0004 * scale, 0.0012 * scale]
 except:
-    layer_sizes = [0.0001, 0.0002, 0.0012]
+    layer_sizes = [0.0001, 0.0004, 0.0012]
 
 target_profit_ratio, stop_loss_ratio = 0.01, 0.02
 def send_telegram_msg(message):
