@@ -37,6 +37,11 @@ BOT_LEVERAGE = 200  # MEXC BTC/USDT futures için kullanılacak kaldıraç (cros
 MEXC_TAKER_FEE_PCT = 0.0002  # %0.02
 MIN_PROFIT_SAFETY_MULT = 3.0  # Kar-al mesafesi, round-trip komisyonun en az bu katı olmalı
 
+# RSI orta nokta eşiği: NW bandı dokunduğu anda RSI'nin "doğru tarafta" olması yeterli
+# kabul edilir (LONG için RSI<50, SHORT için RSI>50) - NW'nin anlık tepkisine RSI'nin
+# dipten/tepeden dönüşünü beklemeden ayak uydurmak için. Hem DCA hem Scalp modunda kullanılır.
+RSI_MIDPOINT = 50
+
 # ================= ZAMAN DİLİMİNE ÖZEL NW / RSI PARAMETRELERİ =================
 # Her zaman diliminin kendi "doğal" penceresine göre ayarlanmış parametreler.
 # limit       : çekilecek mum sayısı (her TF için gerçekçi bir geçmiş süreye denk gelir)
@@ -223,10 +228,15 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
-telegram_chat_id = "@kyounkripto"
-supabase_url = "https://ahnwbxfghccotwnlhzgl.supabase.co"
-supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFobndieFfnaGNjb3R3bmxoemdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwMTI3NzcsImV4cCI6MjA5NzU4ODc3N30.9cR5NBti19ddH7UivdcikYFoCRwk42mIkOkElYqT2Oc"
+# Telegram ve Supabase kimlik bilgileri st.secrets üzerinden okunur (MEXC API
+# anahtarlarıyla aynı güvenli yöntem). Secrets paneline eklenene kadar kod içindeki
+# mevcut değerlere geri döner (fallback) - geçiş sırasında bot kesintiye uğramaz.
+# GÜVENLİK NOTU: Bu fallback değerleri Secrets paneline ekledikten sonra buradan
+# tamamen silmeniz, gerçek anahtarların kod/GitHub geçmişinde kalmaması için önemlidir.
+telegram_token = st.secrets.get("TELEGRAM_TOKEN", "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE")
+telegram_chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "@kyounkripto")
+supabase_url = st.secrets.get("SUPABASE_URL", "https://ahnwbxfghccotwnlhzgl.supabase.co")
+supabase_key = st.secrets.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFobndieFfnaGNjb3R3bmxoemdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwMTI3NzcsImV4cCI6MjA5NzU4ODc3N30.9cR5NBti19ddH7UivdcikYFoCRwk42mIkOkElYqT2Oc")
 supabase: Client = create_client(supabase_url, supabase_key)
 
 def calculate_rsi(series, period=14):
@@ -500,7 +510,7 @@ coin_title = selected_symbol.split(':')[0]
 state_prefix = f"{selected_symbol}_"
 
 col_s1, col_s2 = st.sidebar.columns(2)
-col_s1.metric("Bakiye", "$100.00")
+col_s1.metric("Bakiye", f"${st.session_state.get(f'{state_prefix}balance_usd', 100.0):,.2f}")
 col_s2.metric("Kaldıraç", f"{BOT_LEVERAGE}x")
 st.sidebar.caption(f"🔥 {coin_title} · Cross Margin")
 
@@ -550,6 +560,12 @@ if f"{state_prefix}balance_usd" not in st.session_state:
             st.session_state[f"{state_prefix}manual_lock_db"] = db_data.get("manual_lock", False)
             st.session_state[f"{state_prefix}locked_prices"] = db_data.get("locked_prices")
 
+            # Scalp Modu state'i - DCA'dan tamamen ayrı, kendi pozisyon/maliyet takibi.
+            st.session_state[f"{state_prefix}scalp_active"] = db_data.get("scalp_active", False)
+            st.session_state[f"{state_prefix}scalp_direction"] = db_data.get("scalp_direction")
+            st.session_state[f"{state_prefix}scalp_crypto"] = db_data.get("scalp_crypto", 0.0)
+            st.session_state[f"{state_prefix}scalp_entry_price"] = db_data.get("scalp_entry_price", 0.0)
+
             st.session_state[f"{state_prefix}l_status"] = [
                 db_data.get("l_status_0", False),
                 db_data.get("l_status_1", False),
@@ -590,6 +606,10 @@ if f"{state_prefix}balance_usd" not in st.session_state:
         st.session_state[f"{state_prefix}log_history"] = []
         st.session_state[f"{state_prefix}trade_history"] = []
         st.session_state[f"{state_prefix}manual_lock_db"] = False
+        st.session_state[f"{state_prefix}scalp_active"] = False
+        st.session_state[f"{state_prefix}scalp_direction"] = None
+        st.session_state[f"{state_prefix}scalp_crypto"] = 0.0
+        st.session_state[f"{state_prefix}scalp_entry_price"] = 0.0
 
 if f"{state_prefix}locked_prices" not in st.session_state: 
     st.session_state[f"{state_prefix}locked_prices"] = None
@@ -620,7 +640,11 @@ def save_state_to_db():
             "log_history": st.session_state[f"{state_prefix}log_history"],
             "trade_history": st.session_state[f"{state_prefix}trade_history"],
             "manual_lock": st.session_state.get("live_manual_lock_toggle", False),
-            "locked_prices": st.session_state.get(f"{state_prefix}locked_prices")
+            "locked_prices": st.session_state.get(f"{state_prefix}locked_prices"),
+            "scalp_active": st.session_state.get(f"{state_prefix}scalp_active", False),
+            "scalp_direction": st.session_state.get(f"{state_prefix}scalp_direction"),
+            "scalp_crypto": st.session_state.get(f"{state_prefix}scalp_crypto", 0.0),
+            "scalp_entry_price": st.session_state.get(f"{state_prefix}scalp_entry_price", 0.0)
         }
         supabase.table("bot_state").upsert(data).execute()
     except Exception as e: st.error(f"Veritabanı kaydı başarısız: {type(e).__name__}: {str(e)[:200]}")
@@ -695,7 +719,7 @@ def place_futures_order(symbol, side, amount, leverage=None, is_live=False, redu
     except Exception as e:
         return {"paper": False, "status": "error", "error": f"{type(e).__name__}: {str(e)[:200]}"}
 
-# ================= YAN PANEL AYARLARI VE NAVİGASYON =================
+# ================= MASAÜSTÜ CANLI DCA TERMINALİ =================
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ İşlem Modu (MEXC Futures)")
 
@@ -737,20 +761,6 @@ if is_admin and manual_lock != st.session_state.get(f"{state_prefix}manual_lock_
         st.session_state[f"{state_prefix}locked_prices"] = None
     save_state_to_db()
 
-# ================= YAN PANEL DİNAMİK/MANUEL MOTOR SEÇİMİ =================
-st.sidebar.markdown("---")
-st.sidebar.subheader("🤖 Motor Çalışma Modu")
-engine_choice = st.sidebar.radio(
-    "Motor Seçimi",
-    options=[
-        "🔄 Otomatik Seçim (Algoritmik)",
-        "💤 Sakin Motor (Yatay Sabit)",
-        "⚡ Volatil Motor (Trend Sabit)"
-    ],
-    index=0,
-    key="engine_mode_selection_radio"
-)
-
 col_b1, col_b2 = st.sidebar.columns(2)
 if col_b1.button("🔔 Telegram Test", key="live_telegram_test_button_unique", use_container_width=True, disabled=not is_admin):
     send_telegram_msg(f"👋 *Bağlantı Testi:* Web siteniz üzerinden gönderilen test mesajı başarılı!")
@@ -767,6 +777,33 @@ if col_b2.button("🔴 Sıfırla", key="live_reset_all_positions_button", use_co
     st.session_state[f"{state_prefix}locked_prices"] = None
     save_state_to_db()
     st.rerun()
+
+# ================= STRATEJİ MODU SEÇİMİ (DCA / SCALP) =================
+# Aynı parite (BTC/USDT) üzerinde DCA ve Scalp aynı anda AÇIK POZİSYONLA çalışamaz -
+# borsada aynı yönde açılan pozisyonlar otomatik birleşir, bu da iki stratejinin
+# muhasebesini birbirine karıştırır. Bu yüzden bir modun açık pozisyonu varken,
+# diğer mod tamamen kilitlenir (seçilemez) - pozisyon kapanana kadar geçiş yapılamaz.
+st.sidebar.markdown("---")
+st.sidebar.subheader("🎯 Strateji Modu")
+
+dca_has_position = sum(st.session_state[f"{state_prefix}l_status"]) > 0 or sum(st.session_state[f"{state_prefix}s_status"]) > 0
+scalp_has_position = st.session_state.get(f"{state_prefix}scalp_active", False)
+
+if dca_has_position:
+    st.sidebar.warning("📊 DCA'da açık pozisyon var. Scalp Modu, DCA pozisyonu kapanana kadar kilitli.")
+    strategy_mode = "DCA"
+elif scalp_has_position:
+    st.sidebar.warning("⚡ Scalp'te açık pozisyon var. DCA Modu, Scalp pozisyonu kapanana kadar kilitli.")
+    strategy_mode = "SCALP"
+else:
+    strategy_mode = st.sidebar.radio(
+        "Aktif Strateji",
+        options=["📊 DCA (Kademeli)", "⚡ Scalp (Tek Giriş, Hızlı Çıkış)"],
+        index=0,
+        key="strategy_mode_radio",
+        label_visibility="collapsed"
+    )
+    strategy_mode = "DCA" if strategy_mode.startswith("📊") else "SCALP"
 
 @st.fragment(run_every="10s")
 def live_dca_fragment():
@@ -812,24 +849,14 @@ def live_dca_fragment():
 
         price_is_volatile = price_std_now > price_std_median
         volume_confirms = vol_now > vol_median
-        auto_is_volatile = price_is_volatile and volume_confirms
+        is_volatile = price_is_volatile and volume_confirms
 
-        # Motor seçimine göre dinamik veya el ile sabitleme mantığı
-        selected_engine = st.session_state.get("engine_mode_selection_radio", "🔄 Otomatik Seçim (Algoritmik)")
-        if selected_engine == "💤 Sakin Motor (Yatay Sabit)":
-            is_volatile = False
-            market_state_label = "💤 SAKİN (Yatay Salınım — El ile Sabitlendi)"
-        elif selected_engine == "⚡ Volatil Motor (Trend Sabit)":
-            is_volatile = True
-            market_state_label = "⚡ VOLATİL (Trend / Sert Hareket — El ile Sabitlendi)"
+        if is_volatile:
+            market_state_label = "⚡ VOLATİL (Trend / Sert Hareket — Hacim Onaylı)"
+        elif price_is_volatile and not volume_confirms:
+            market_state_label = "⚠️ FİYAT OYNAK AMA HACİM DÜŞÜK (Sakin Sayılır)"
         else:
-            is_volatile = auto_is_volatile
-            if is_volatile:
-                market_state_label = "⚡ VOLATİL (Trend / Sert Hareket — Hacim Onaylı)"
-            elif price_is_volatile and not volume_confirms:
-                market_state_label = "⚠️ FİYAT OYNAK AMA HACİM DÜŞÜK (Sakin Sayılır)"
-            else:
-                market_state_label = "💤 SAKİN (Yatay Salınım)"
+            market_state_label = "💤 SAKİN (Yatay Salınım)"
 
         p1h = TF_PARAMS["1h"]
         raw_1h = exchange.fetch_ohlcv(selected_symbol, "1h", limit=p1h["limit"])
@@ -900,10 +927,6 @@ def live_dca_fragment():
         rsi_k1_prev = df_k1.iloc[-3]["RSI"]
         rsi_k2_prev = df_k2.iloc[-3]["RSI"]
         rsi_k3_prev = df_k3.iloc[-3]["RSI"]
-        # RSI orta nokta eşiği: NW bandı dokunduğu anda RSI'nin "doğru tarafta" olması
-        # yeterli kabul edilir (LONG için RSI<50, SHORT için RSI>50) - NW'nin anlık
-        # tepkisine RSI'nin dipten/tepeden dönüşünü beklemeden ayak uydurmak için.
-        RSI_MIDPOINT = 50
 
         # Her kademenin kendi zaman diliminin ATR değeri - kar-al/stop-loss mesafelerini
         # piyasanın o anki gerçek oynaklığına göre ölçeklemek için kullanılır.
@@ -1046,7 +1069,9 @@ def live_dca_fragment():
         div_bear_per_kademe = [div_k1_bear, div_k2_bear, div_k3_bear]
 
         for idx, th, val, rsi_val, rsi_prev, div_bull in zip([0, 1, 2], [nw_alt_5m, nw_alt_1h, nw_alt_4h], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe, div_bull_per_kademe):
-            nw_signal = current_price <= th and (idx == 0 or st.session_state[f"{state_prefix}l_status"][idx-1]) and not st.session_state[f"{state_prefix}l_status"][idx]
+            # Strateji modu DCA değilse (Scalp aktifse) yeni DCA pozisyonu açılmaz -
+            # mevcut açık pozisyonların kapanış mantığı (yukarıda) etkilenmez.
+            nw_signal = strategy_mode == "DCA" and current_price <= th and (idx == 0 or st.session_state[f"{state_prefix}l_status"][idx-1]) and not st.session_state[f"{state_prefix}l_status"][idx]
             # RSI ONAYI: NW bandı dokunduğu anda RSI'nin "doğru tarafta" (düşüş/zayıf
             # momentum tarafında, RSI<50) olması yeterlidir. Önceden RSI'nin önce aşırı
             # satım bölgesine inip sonra dönmesini bekliyorduk - bu, NW'nin anlık tepkisine
@@ -1076,7 +1101,7 @@ def live_dca_fragment():
                 break
 
         for idx, th, val, rsi_val, rsi_prev, div_bear in zip([0, 1, 2], [nw_ust_5m, nw_ust_1h, nw_ust_4h], layer_sizes, rsi_per_kademe, rsi_prev_per_kademe, div_bear_per_kademe):
-            nw_signal = current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]
+            nw_signal = strategy_mode == "DCA" and current_price >= th and (idx == 0 or st.session_state[f"{state_prefix}s_status"][idx-1]) and not st.session_state[f"{state_prefix}s_status"][idx]
             # RSI ONAYI: NW bandı dokunduğu anda RSI'nin "doğru tarafta" (yükseliş/güçlü
             # momentum tarafında, RSI>50) olması yeterlidir.
             rsi_confirms_short = rsi_val > RSI_MIDPOINT
@@ -1271,6 +1296,142 @@ def live_dca_fragment():
             pass
         time.sleep(5)
 
+# ================= SCALP MODU - AYRI, BAĞIMSIZ FRAGMENT =================
+# DCA kodundan tamamen ayrı çalışır. Tek giriş (kademe yok), sabit miktar,
+# her zaman kısa zaman dilimi (1m NW + 5m ATR), pozisyon açılır açılmaz hem
+# kar-al hem stop-loss aktif olur. Volatil/sakin moddan etkilenmez.
+SCALP_AMOUNT = 0.0005  # sabit BTC miktarı, tek giriş
+SCALP_TP_MULT, SCALP_SL_MULT = 1.0, 1.0  # 1:1 risk/ödül, scalp standardı
+
+@st.fragment(run_every="10s")
+def scalp_fragment():
+    try:
+        live_ticker = exchange.fetch_ticker(selected_symbol)
+        current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
+
+        p1m = TF_PARAMS["1m"]
+        raw_1m = exchange.fetch_ohlcv(selected_symbol, "1m", limit=p1m["limit"])
+        df_1m = pd.DataFrame(raw_1m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_1m["Zaman"] = pd.to_datetime(df_1m["Zaman"], unit="ms")
+        df_1m = calculate_nw_bands(df_1m, 3.0, "_1m", h=p1m["h"], std_window=p1m["std_window"])
+        df_1m["RSI"] = calculate_rsi(df_1m["Kapanis"], period=p1m["rsi_period"])
+
+        p5m = TF_PARAMS["5m"]
+        raw_5m = exchange.fetch_ohlcv(selected_symbol, "5m", limit=p5m["limit"])
+        df_5m = pd.DataFrame(raw_5m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
+        df_5m["Zaman"] = pd.to_datetime(df_5m["Zaman"], unit="ms")
+        df_5m["ATR"] = calculate_atr(df_5m, period=14)
+
+        nw_alt_1m = df_1m.iloc[-2]["NW_Alt_1m"]
+        nw_ust_1m = df_1m.iloc[-2]["NW_Ust_1m"]
+        rsi_1m = df_1m.iloc[-2]["RSI"]
+        atr_5m = df_5m.iloc[-2]["ATR"]
+
+        # Komisyon güvenliği: kar-al mesafesi her zaman round-trip komisyonun en az
+        # 3 katı olacak şekilde garanti edilir (DCA'daki ile aynı mantık). Kar-al
+        # bu yüzden büyütülürse, 1:1 risk/ödül oranını korumak için stop-loss da
+        # AYNI büyütme oranıyla ölçeklenir (aksi halde sakin piyasada kar-al >> stop-loss
+        # olur ve asimetrik bir risk profili oluşur).
+        round_trip_fee_pct = 2 * MEXC_TAKER_FEE_PCT
+        min_tp_distance = current_price * round_trip_fee_pct * MIN_PROFIT_SAFETY_MULT
+        raw_tp_distance = SCALP_TP_MULT * atr_5m
+        scalp_tp_distance = max(raw_tp_distance, min_tp_distance)
+        scale_factor = scalp_tp_distance / raw_tp_distance if raw_tp_distance > 0 else 1.0
+        scalp_sl_distance = SCALP_SL_MULT * atr_5m * scale_factor
+
+        scalp_active = st.session_state[f"{state_prefix}scalp_active"]
+        scalp_direction = st.session_state[f"{state_prefix}scalp_direction"]
+
+        # --- ÇIKIŞ KONTROLÜ (pozisyon açıksa) ---
+        if scalp_active:
+            entry = st.session_state[f"{state_prefix}scalp_entry_price"]
+            amt = st.session_state[f"{state_prefix}scalp_crypto"]
+            if scalp_direction == "LONG":
+                tp = entry + scalp_tp_distance
+                sl = entry - scalp_sl_distance
+                pnl_usd = (current_price - entry) * amt
+                exit_signal = current_price >= tp or current_price <= sl
+                exit_reason = "Kar-Al" if current_price >= tp else "Stop-Loss"
+                close_side = "sell"
+            else:
+                tp = entry - scalp_tp_distance
+                sl = entry + scalp_sl_distance
+                pnl_usd = (entry - current_price) * amt
+                exit_signal = current_price <= tp or current_price >= sl
+                exit_reason = "Kar-Al" if current_price <= tp else "Stop-Loss"
+                close_side = "buy"
+
+            if exit_signal:
+                order_result = place_futures_order(selected_symbol, close_side, amt, is_live=live_trading_enabled, reduce_only=True)
+                margin_used = (amt * entry) / BOT_LEVERAGE
+                st.session_state[f"{state_prefix}balance_usd"] += margin_used + pnl_usd
+                pnl_pct = (pnl_usd / margin_used * 100) if margin_used > 0 else 0.0
+                mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
+                order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+                msg = f"⚡ *[{mode_tag}] SCALP {scalp_direction} {exit_reason} ({selected_symbol.split(':')[0]})*\nGiriş: {entry:.2f}\nÇıkış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){order_note}"
+                send_telegram_msg(msg)
+                record_trade(f"SCALP-{scalp_direction}", exit_reason, entry, current_price, amt, pnl_usd, pnl_pct, live_trading_enabled)
+                st.session_state[f"{state_prefix}scalp_active"] = False
+                st.session_state[f"{state_prefix}scalp_direction"] = None
+                st.session_state[f"{state_prefix}scalp_crypto"] = 0.0
+                st.session_state[f"{state_prefix}scalp_entry_price"] = 0.0
+                save_state_to_db()
+
+        # --- GİRİŞ KONTROLÜ (pozisyon yoksa, sadece Scalp modu aktifken) ---
+        elif strategy_mode == "SCALP":
+            rsi_confirms_long = rsi_1m < RSI_MIDPOINT
+            rsi_confirms_short = rsi_1m > RSI_MIDPOINT
+            if current_price <= nw_alt_1m and rsi_confirms_long:
+                order_result = place_futures_order(selected_symbol, "buy", SCALP_AMOUNT, is_live=live_trading_enabled)
+                margin_used = (SCALP_AMOUNT * current_price) / BOT_LEVERAGE
+                st.session_state[f"{state_prefix}balance_usd"] -= margin_used
+                st.session_state[f"{state_prefix}scalp_active"] = True
+                st.session_state[f"{state_prefix}scalp_direction"] = "LONG"
+                st.session_state[f"{state_prefix}scalp_crypto"] = SCALP_AMOUNT
+                st.session_state[f"{state_prefix}scalp_entry_price"] = current_price
+                mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
+                send_telegram_msg(f"⚡ *[{mode_tag}] SCALP LONG AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {SCALP_AMOUNT:.6f} BTC\nRSI: {rsi_1m:.1f}")
+                save_state_to_db()
+            elif current_price >= nw_ust_1m and rsi_confirms_short:
+                order_result = place_futures_order(selected_symbol, "sell", SCALP_AMOUNT, is_live=live_trading_enabled)
+                margin_used = (SCALP_AMOUNT * current_price) / BOT_LEVERAGE
+                st.session_state[f"{state_prefix}balance_usd"] -= margin_used
+                st.session_state[f"{state_prefix}scalp_active"] = True
+                st.session_state[f"{state_prefix}scalp_direction"] = "SHORT"
+                st.session_state[f"{state_prefix}scalp_crypto"] = SCALP_AMOUNT
+                st.session_state[f"{state_prefix}scalp_entry_price"] = current_price
+                mode_tag = "🔴 CANLI" if live_trading_enabled else "📝 KAĞIT"
+                send_telegram_msg(f"⚡ *[{mode_tag}] SCALP SHORT AÇILDI ({selected_symbol.split(':')[0]})*\nFiyat: {current_price:.2f}\nMiktar: {SCALP_AMOUNT:.6f} BTC\nRSI: {rsi_1m:.1f}")
+                save_state_to_db()
+
+        # --- SCALP PANELİ ---
+        st.markdown("---")
+        st.subheader("⚡ Scalp Modu")
+        if strategy_mode != "SCALP" and not scalp_active:
+            st.caption("Scalp Modu şu an pasif. Sidebar'dan 'Strateji Modu' bölümünden aktif edebilirsiniz.")
+        col_sc1, col_sc2, col_sc3 = st.columns(3)
+        col_sc1.metric("Anlık Fiyat", f"${current_price:,.2f}")
+        col_sc2.metric("1m RSI", f"{rsi_1m:.1f}")
+        col_sc3.metric("5m ATR", f"${atr_5m:.2f}")
+
+        if scalp_active:
+            entry = st.session_state[f"{state_prefix}scalp_entry_price"]
+            amt = st.session_state[f"{state_prefix}scalp_crypto"]
+            live_pnl = (current_price - entry) * amt if scalp_direction == "LONG" else (entry - current_price) * amt
+            st.info(f"**{scalp_direction} Açık** — Giriş: ${entry:,.2f} · Miktar: {amt:.6f} BTC")
+            col_sp1, col_sp2 = st.columns(2)
+            col_sp1.metric("Anlık K/Z", f"${live_pnl:+,.4f}")
+            if scalp_direction == "LONG":
+                col_sp2.metric("Kar-Al / Stop", f"${entry+scalp_tp_distance:,.2f} / ${entry-scalp_sl_distance:,.2f}")
+            else:
+                col_sp2.metric("Kar-Al / Stop", f"${entry-scalp_tp_distance:,.2f} / ${entry+scalp_sl_distance:,.2f}")
+        else:
+            st.caption("Açık scalp pozisyonu yok. 1m NW bandı + RSI sinyali geldiğinde otomatik açılacak.")
+
+    except Exception as e:
+        st.error(f"Scalp hatası, 10s sonra tekrar denenecek: {type(e).__name__}: {str(e)[:200]}")
+        time.sleep(5)
+
 @st.fragment(run_every="1s")
 def countdown_fragment():
     if "scan_start_time" not in st.session_state:
@@ -1284,6 +1445,7 @@ def countdown_fragment():
         st.session_state.scan_start_time = time.time()
 
 live_dca_fragment()
+scalp_fragment()
 with st.sidebar:
     countdown_fragment()
 
@@ -1318,13 +1480,17 @@ else:
 
     st.markdown("##### Son İşlemler")
     df_display = df_trades.copy()
-    df_display["zaman"] = pd.to_datetime(df_display["zaman"]).dt.strftime("%d.%m %H:%M:%S")
+    # ÖNEMLİ: Sıralama, tarih METNE çevrilmeden ÖNCE gerçek datetime nesnesi üzerinden
+    # yapılır. Aksi halde (örn. "22.06" vs "01.07") string karşılaştırması ay sınırını
+    # geçen kayıtları yanlış sıralar (string olarak "01.07" < "22.06" görünür).
+    df_display["zaman"] = pd.to_datetime(df_display["zaman"])
+    df_display = df_display.sort_values("zaman", ascending=False)
+    df_display["zaman"] = df_display["zaman"].dt.strftime("%d.%m %H:%M:%S")
     df_display = df_display.rename(columns={
         "zaman": "Zaman", "yon": "Yön", "sebep": "Sebep",
         "giris_fiyati": "Giriş Fiyatı", "cikis_fiyati": "Çıkış Fiyatı",
         "miktar": "Miktar (BTC)", "pnl_usd": "K/Z (USDT)", "pnl_pct": "K/Z (%)", "mod": "Mod"
     })
-    df_display = df_display.sort_values("Zaman", ascending=False)
     st.dataframe(df_display, use_container_width=True, hide_index=True)
 
     csv_data = df_trades.to_csv(index=False).encode("utf-8")
