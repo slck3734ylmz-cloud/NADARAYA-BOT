@@ -520,8 +520,26 @@ def live_dca_fragment():
         df_15m["Zaman"] = pd.to_datetime(df_15m["Zaman"], unit="ms")
         df_15m = calculate_nw_bands(df_15m, 3.0, "_15m", h=p15m["h"], std_window=p15m["std_window"])
         df_15m["RSI"] = calculate_rsi(df_15m["Kapanis"], period=p15m["rsi_period"])
-        is_volatile = df_15m["Kapanis"].rolling(20).std().iloc[-1] > df_15m["Kapanis"].rolling(20).std().median()
-        market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
+
+        # Volatilite tespiti: HEM fiyat std'si HEM hacim onayı birlikte gerekir.
+        # Sadece fiyat std'sinin kendi medyanına göre yüksek olması yeterli değil
+        # (göreceli bir ölçüm, mutlak piyasa durumunu yansıtmaz); hacim de
+        # ortalamasının üzerinde olmalı ki "gerçek" bir volatilite patlaması sayılsın.
+        price_std_now = df_15m["Kapanis"].rolling(20).std().iloc[-1]
+        price_std_median = df_15m["Kapanis"].rolling(20).std().median()
+        vol_now = df_15m["Hacim"].rolling(20).mean().iloc[-1]
+        vol_median = df_15m["Hacim"].rolling(20).mean().median()
+
+        price_is_volatile = price_std_now > price_std_median
+        volume_confirms = vol_now > vol_median
+        is_volatile = price_is_volatile and volume_confirms
+
+        if is_volatile:
+            market_state_label = "⚡ VOLATİL (Trend / Sert Hareket — Hacim Onaylı)"
+        elif price_is_volatile and not volume_confirms:
+            market_state_label = "⚠️ FİYAT OYNAK AMA HACİM DÜŞÜK (Sakin Sayılır)"
+        else:
+            market_state_label = "💤 SAKİN (Yatay Salınım)"
 
         p1h = TF_PARAMS["1h"]
         raw_1h = exchange.fetch_ohlcv(selected_symbol, "1h", limit=p1h["limit"])
@@ -802,6 +820,7 @@ def live_dca_fragment():
 
             st.write(f"Mevcut Durum: **{market_state_label}**")
             st.write(f"Aktif Motor  : **{active_engine_name}**")
+            st.caption(f"Fiyat Oynaklığı: {'Yüksek' if price_is_volatile else 'Normal/Düşük'}  |  Hacim: {'Ortalama Üstü' if volume_confirms else 'Ortalama Altı'}")
         
             st.markdown("---")
             col_t1, col_t2 = st.columns([1, 1.2])
