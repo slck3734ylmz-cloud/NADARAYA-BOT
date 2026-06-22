@@ -3,6 +3,7 @@ import ccxt
 import pandas as pd
 import numpy as np
 import time
+import datetime
 import requests
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -22,6 +23,8 @@ exchange = ccxt.mexc({
     'enableRateLimit': True,
     'options': {'defaultType': 'swap'}  # MEXC Futures/Vadeli (USDT-M) modu
 })
+
+BOT_LEVERAGE = 200  # MEXC BTC/USDT futures için kullanılacak kaldıraç (cross margin)
 
 # ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
 def check_password():
@@ -107,31 +110,19 @@ def get_top_50_volume_coins():
         return [{'symbol': "BTC/USDT:USDT", 'display': "BTC/USDT ($64,222.00 | +0.00%)"}]
 
 @st.cache_data(ttl=300)
-def get_market_movers_and_funding():
+def get_btc_funding_rate():
+    """BTC/USDT futures için anlık fonlama oranını ve bir sonraki ödeme zamanını getirir."""
     try:
-        tickers = exchange.fetch_tickers()
-        movers, funding = [], []
-        for sym, t in tickers.items():
-            if sym.endswith(':USDT'):
-                p, c = t.get('last') or t.get('close') or 0.0, t.get('percentage') or 0.0
-                fr = float(t.get('info', {}).get('funding_rate', 0.0)) * 100.0
-                clean = sym.split(":")[0]
-                if p > 0:
-                    movers.append({'Coin': clean, 'Fiyat (USDT)': p, 'Değişim (%)': c, 'Fonlama Oranı': fr})
-                    funding.append({'symbol': clean, 'rate': fr})
-        funding.sort(key=lambda x: abs(x['rate']), reverse=True)
-        df_m = pd.DataFrame(movers)
-        df_g = df_m.sort_values(by='Değişim (%)', ascending=False).head(5).copy()
-        df_g['Değişim (%)'] = df_g['Değişim (%)'].apply(lambda x: f"{x:+.2f}%")
-        df_g['Fonlama Oranı'] = df_g['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
-        df_g['Fiyat (USDT)'] = df_g['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
-        df_l = df_m.sort_values(by='Değişim (%)', ascending=True).head(5).copy()
-        df_l['Değişim (%)'] = df_l['Değişim (%)'].apply(lambda x: f"{x:.2f}%")
-        df_l['Fonlama Oranı'] = df_l['Fonlama Oranı'].apply(lambda x: f"{x:+.4f}%")
-        df_l['Fiyat (USDT)'] = df_l['Fiyat (USDT)'].apply(lambda x: f"${x:,.2f}")
-        return funding[:10], df_g, df_l
-    except:
-        return [], pd.DataFrame(), pd.DataFrame()
+        fr_data = exchange.fetch_funding_rate("BTC/USDT:USDT")
+        return {
+            "rate": fr_data.get("fundingRate"),
+            "next_rate": fr_data.get("nextFundingRate"),
+            "next_time": fr_data.get("nextFundingTimestamp") or fr_data.get("fundingTimestamp"),
+            "mark_price": fr_data.get("markPrice"),
+            "index_price": fr_data.get("indexPrice"),
+        }
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {str(e)[:150]}"}
 
 @st.cache_data(ttl=300)
 def estimate_liquidation_pools(symbol):
@@ -266,9 +257,6 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
 
     return fig
 
-# Global veriler
-extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
-
 # ================= YAN PANEL AYARLARI VE NAVİGASYON =================
 st.sidebar.title("💳 Cüzdan Durumu")
 st.sidebar.write("Başlangıç Bakiyesi: 100.00 USD")
@@ -278,19 +266,40 @@ selected_symbol = "BTC/USDT:USDT"
 coin_title = selected_symbol.split(':')[0]
 state_prefix = f"{selected_symbol}_"
 st.sidebar.markdown(f"🔥 **Sabit İşlem Çifti:** `{coin_title}`")
+st.sidebar.markdown(f"⚡ **Kaldıraç:** `{BOT_LEVERAGE}x` (Cross Margin)")
 
-# ================= YAN PANEL FONLAMA ORANLARI YAZDIRMA =================
+# ================= YAN PANEL FONLAMA ORANI (BTC) =================
 st.sidebar.markdown("---")
-st.sidebar.subheader("💸 En Ekstrem Fonlama Oranları (Top 10)")
-if extreme_rates:
-    for item in extreme_rates:
-        rate_str = f"{item['rate']:+.4f}%"
-        if item['rate'] < 0:
-            st.sidebar.markdown(f"**{item['symbol']}**: :green[{rate_str}]")
-        else:
-            st.sidebar.markdown(f"**{item['symbol']}**: :red[{rate_str}]")
+st.sidebar.subheader("💸 BTC/USDT Fonlama Oranı")
+btc_funding = get_btc_funding_rate()
+
+if "error" in btc_funding:
+    st.sidebar.warning(f"Fonlama oranı alınamadı: {btc_funding['error']}")
+elif btc_funding.get("rate") is not None:
+    rate_pct = btc_funding["rate"] * 100.0
+    rate_str = f"{rate_pct:+.4f}%"
+    if rate_pct < 0:
+        st.sidebar.markdown(f"**Mevcut Oran:** :green[{rate_str}]")
+        st.sidebar.caption("Negatif oran: Short'lar Long'lara ödeme yapar.")
+    else:
+        st.sidebar.markdown(f"**Mevcut Oran:** :red[{rate_str}]")
+        st.sidebar.caption("Pozitif oran: Long'lar Short'lara ödeme yapar.")
+
+    if btc_funding.get("next_rate") is not None:
+        next_pct = btc_funding["next_rate"] * 100.0
+        st.sidebar.write(f"**Tahmini Sonraki Oran:** {next_pct:+.4f}%")
+
+    if btc_funding.get("next_time"):
+        try:
+            next_dt = datetime.datetime.fromtimestamp(btc_funding["next_time"] / 1000, tz=datetime.timezone.utc)
+            st.sidebar.write(f"**Sonraki Ödeme:** {next_dt.strftime('%H:%M UTC')}")
+        except Exception:
+            pass
+
+    if btc_funding.get("mark_price"):
+        st.sidebar.caption(f"Mark Fiyat: ${btc_funding['mark_price']:,.2f}")
 else:
-    st.sidebar.write("Fonlama oranları yükleniyor...")
+    st.sidebar.write("Fonlama oranı yükleniyor...")
 
 # ================= DURUM (STATE) GÜVENLİ YÜKLEME =================
 if f"{state_prefix}balance_usd" not in st.session_state:
@@ -396,7 +405,7 @@ def send_telegram_msg(message):
     try: requests.post(url, json=payload)
     except: pass
 
-def place_futures_order(symbol, side, amount, leverage=1, is_live=False, reduce_only=False):
+def place_futures_order(symbol, side, amount, leverage=None, is_live=False, reduce_only=False):
     """
     MEXC Futures (vadeli) emir gönderme yardımcı fonksiyonu.
     - is_live=False (Kağıt Mod): Hiçbir gerçek emir göndermez, sadece sonucu simüle edip
@@ -404,14 +413,17 @@ def place_futures_order(symbol, side, amount, leverage=1, is_live=False, reduce_
     - is_live=True (Canlı Mod): MEXC'e gerçek bir piyasa emri gönderir.
     side: 'buy' (long aç/short kapat) veya 'sell' (short aç/long kapat)
     reduce_only: pozisyon kapatma (stop-loss/kar-al) emirlerinde True gönderilir.
+    leverage: belirtilmezse BOT_LEVERAGE (200x) kullanılır.
     """
+    if leverage is None:
+        leverage = BOT_LEVERAGE
     if not is_live:
         return {"paper": True, "symbol": symbol, "side": side, "amount": amount, "status": "simulated"}
 
     try:
         params = {
             "leverage": leverage,
-            "marginMode": "isolated",
+            "marginMode": "cross",
         }
         if reduce_only:
             params["reduceOnly"] = True
@@ -523,7 +535,7 @@ def live_dca_fragment():
         df_1d["RSI"] = calculate_rsi(df_1d["Kapanis"])
 
         df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol)
-        extreme_rates, df_gainers, df_losers = get_market_movers_and_funding()
+        btc_funding_live = get_btc_funding_rate()
 
         raw_k1_alt = df_5m.iloc[-2]["NW_Alt_5m"]
         raw_k2_alt = df_1h.iloc[-2]["NW_Alt_1h"]
@@ -749,6 +761,9 @@ def live_dca_fragment():
             st.markdown("---")
             col_t1, col_t2 = st.columns([1, 1.2])
             col_t1.metric(label="4h Genel Trend", value=trend_4h)
+            if "rate" in btc_funding_live and btc_funding_live.get("rate") is not None:
+                fr_pct = btc_funding_live["rate"] * 100.0
+                col_t2.metric(label="Fonlama Oranı (BTC)", value=f"{fr_pct:+.4f}%")
             if trend_4h == "YUKARI (BOĞA)": st.success(f"🛡️ Emniyet: {warning_msg}")
             else: st.error(f"🛡️ Emniyet: {warning_msg}")
         
@@ -797,16 +812,6 @@ def live_dca_fragment():
                     ps1.metric("Maliyet Ort.", f"${s_avg:,.2f}")
                     ps2.metric("Miktar", f"{s_amt:.6f} {coin_title.split('/')[0]}")
                     ps3.metric("K/Z", f"${s_pnl_usd:+,.2f}", f"{s_pnl_pct:+.2f}%")
-
-        st.markdown("---")
-        st.subheader("🌎 Günlük Piyasa Liderleri (Top 5 Yükselen & Düşen)")
-        col_g, col_lo = st.columns(2)
-        with col_g:
-            st.success("📈 EN ÇOK YÜKSELENLER")
-            if not df_gainers.empty: st.table(df_gainers.reset_index(drop=True))
-        with col_lo:
-            st.error("📉 EN ÇOK DÜŞENLER")
-            if not df_losers.empty: st.table(df_losers.reset_index(drop=True))
 
         st.markdown("---")
         if st.session_state[f"{state_prefix}log_history"]:
