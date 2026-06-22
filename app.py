@@ -59,11 +59,24 @@ def check_password():
             50% { transform: translateY(-6px) rotate(4deg); }
         }
         .sheep-emoji { display: inline-block; animation: sheepBounce 2.2s ease-in-out infinite; }
-        /* Giriş formunu (text_input + button) görselle aynı 380px genişliğe ve ortaya hizalar */
+        
+        /* Giriş formunu görselle aynı genişliğe ve ortaya hizalar */
         div[data-testid="stForm"], 
         div[data-testid="stVerticalBlockBorderWrapper"]:has(div[data-testid="stForm"]) {
-            max-width: 380px;
-            margin: 0 auto;
+            max-width: 380px !important;
+            margin: 0 auto !important;
+        }
+        
+        /* Giriş alanındaki 'Press Enter to submit form' talimatının üst üste binmesini önlemek için gizliyoruz */
+        div[data-testid="InputInstructions"] {
+            display: none !important;
+            visibility: hidden !important;
+        }
+        
+        /* Şifre alanının yüksekliğini ve yazı boyutunu daha ferah yapıyoruz */
+        div[data-testid="stTextInput"] input {
+            height: 46px !important;
+            font-size: 15px !important;
         }
         </style>
         <div style="display:flex; align-items:center; justify-content:center; padding:2.5rem 0 1rem; font-family: -apple-system, sans-serif;">
@@ -90,17 +103,16 @@ def check_password():
         unsafe_allow_html=True
     )
 
-    _, col_login, _ = st.columns([1, 1.4, 1])
-    with col_login:
-        with st.form(key="login_form"):
-            user_password = st.text_input("Şifre", type="password", key="login_pass_key_global", label_visibility="collapsed", placeholder="Şifrenizi girin")
-            submitted = st.form_submit_button("Giriş Yap", use_container_width=True)
-            if submitted:
-                if user_password == "dca2026":
-                    st.session_state.password_correct = True
-                    st.rerun()
-                else:
-                    st.error("❌ Hatalı Şifre! Erişim reddedildi.")
+    # Kolon sıkıştırmasını kaldırıp direkt CSS ile formu ortalıyoruz, böylece input daralıp üst üste binmiyor.
+    with st.form(key="login_form"):
+        user_password = st.text_input("Şifre", type="password", key="login_pass_key_global", label_visibility="collapsed", placeholder="Şifrenizi girin")
+        submitted = st.form_submit_button("Giriş Yap", use_container_width=True)
+        if submitted:
+            if user_password == "dca2026":
+                st.session_state.password_correct = True
+                st.rerun()
+            else:
+                st.error("❌ Hatalı Şifre! Erişim reddedildi.")
     return False
 
 if not check_password(): st.stop()
@@ -261,7 +273,7 @@ def estimate_liquidation_pools(symbol, is_volatile=False):
     """
     NOT: MEXC ve genel olarak borsalar, piyasa-geneli gerçek likidasyon/açık pozisyon
     verisini herkese açık API üzerinden sunmuyor (sadece kullanıcının kendi pozisyonu
-    görüleilebilir). Bu fonksiyon bu yüzden TAHMİNİ bir yöntem kullanır: geçmiş mumların
+    görülebilir). Bu fonksiyon bu yüzden TAHMİNİ bir yöntem kullanır: geçmiş mumların
     her birinin en düşük/en yüksek noktasından, piyasada yaygın kullanılan kaldıraç
     seviyelerine (10x, 25x, 50x, 100x) göre olası likidasyon fiyatlarını hesaplar.
     Birden fazla kaldıraç seviyesinin ve yüksek hacmin ÇAKIŞTIĞI fiyat noktaları
@@ -1129,6 +1141,88 @@ def countdown_fragment():
         st.write("🔄 Taranıyor...")
         st.session_state.scan_start_time = time.time()
 
+# ================= KİLİTLİ GÜVENLİ GİRİŞ YAPISI (ÖRTÜŞME ENGELLİ) =================
+# st.columns kaldırılmıştır. Form direkt CSS ile ortalanarak input'un sıkışması ve
+# tarayıcı eklentilerinin (şifre yöneticileri vb.) çakışması önlenmiştir.
+# st.text_input altındaki "Press Enter to submit form" yazısı gizlenmiştir.
+def check_password_fixed():
+    if "password_correct" not in st.session_state:
+        st.session_state.password_correct = False
+    if st.session_state.password_correct: return True
+
+    st.markdown(
+        """
+        <style>
+        @keyframes sheepBounce {
+            0%, 100% { transform: translateY(0) rotate(-4deg); }
+            50% { transform: translateY(-6px) rotate(4deg); }
+        }
+        .sheep-emoji { display: inline-block; animation: sheepBounce 2.2s ease-in-out infinite; }
+        
+        /* Giriş formunun daralmasını önler ve düzgün şekilde ortalar */
+        div[data-testid="stForm"], 
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(div[data-testid="stForm"]) {
+            max-width: 380px !important;
+            margin: 0 auto !important;
+        }
+        
+        /* Streamlit form altındaki talimat yazısını tamamen gizleyerek çakışmayı önler */
+        div[data-testid="InputInstructions"] {
+            display: none !important;
+            visibility: hidden !important;
+        }
+        
+        /* Input kutusuna yükseklik ve iç boşluk vererek ferahlatır */
+        div[data-testid="stTextInput"] input {
+            height: 48px !important;
+            font-size: 15px !important;
+            padding-right: 40px !important;
+        }
+        </style>
+        <div style="display:flex; align-items:center; justify-content:center; padding:2.5rem 0 1rem; font-family: -apple-system, sans-serif;">
+          <div style="width:380px; text-align:center;">
+            <div style="position:relative; width:112px; height:112px; margin:0 auto 8px;">
+              <svg width="112" height="112" viewBox="0 0 112 112" style="position:absolute; top:0; left:0;">
+                <defs>
+                  <radialGradient id="badgeGlow" cx="50%" cy="38%" r="65%">
+                    <stop offset="0%" stop-color="#30386B"/>
+                    <stop offset="100%" stop-color="#161B33"/>
+                  </radialGradient>
+                </defs>
+                <circle cx="56" cy="56" r="54" fill="url(#badgeGlow)" stroke="#9A8BF0" stroke-width="1"/>
+                <circle cx="56" cy="56" r="45" fill="none" stroke="#4A4F7A" stroke-width="0.6"/>
+              </svg>
+              <div class="sheep-emoji" style="position:absolute; top:0; left:0; width:112px; height:112px; display:flex; align-items:center; justify-content:center; font-size:46px;">🐑</div>
+            </div>
+            <div style="color:#9A8BF0; font-size:10px; letter-spacing:2px; margin-bottom:14px;">幸運の羊</div>
+            <div style="color:#E8E9F5; font-size:28px; font-weight:600; letter-spacing:3px; margin-bottom:6px;">KYOUN</div>
+            <div style="color:#6E72A0; font-size:11px; letter-spacing:2px; text-transform:uppercase; margin-bottom:8px;">şanslı koyun terminali</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    with st.form(key="login_form"):
+        user_password = st.text_input("Şifre", type="password", key="login_pass_key_global", label_visibility="collapsed", placeholder="Şifrenizi girin")
+        submitted = st.form_submit_button("Giriş Yap", use_container_width=True)
+        if submitted:
+            if user_password == "dca2026":
+                st.session_state.password_correct = True
+                st.rerun()
+            else:
+                st.error("❌ Hatalı Şifre! Erişim reddedildi.")
+    return False
+
+# Eski check_password yerine yeni örtüşme önleyen check_password_fixed çağrılır.
+if not check_password_fixed(): st.stop()
+
+# ================= ANA PANEL ÇALIŞTIRMA VE ÇIKIŞ YAPISI =================
 live_dca_fragment()
 with st.sidebar:
     countdown_fragment()
+    st.markdown("---")
+    # Platformdan güvenli çıkış yapmayı sağlayan çıkış butonu
+    if st.button("🚪 Platformdan Çıkış", key="global_logout_button", use_container_width=True):
+        st.session_state.password_correct = False
+        st.rerun()
