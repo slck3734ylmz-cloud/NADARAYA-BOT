@@ -5,6 +5,7 @@ import numpy as np
 import time
 import datetime
 import requests
+import json
 import plotly.graph_objects as go
 from supabase import create_client, Client
 
@@ -45,8 +46,14 @@ TF_PARAMS = {
     "1d":  {"limit": 60,  "h": 6, "rsi_period": 14, "std_window": 14},
 }
 
+# ================= GÜVENLİ ÇIKIŞ GERİ ÇAĞIRMA (CALLBACK) FONKSİYONU =================
+def logout_callback():
+    st.session_state.password_correct = False
+    if "login_pass_key_global" in st.session_state:
+        st.session_state["login_pass_key_global"] = ""
+
 # ================= KİLİT EKRANI VE GÜVENLİK GİRİŞİ =================
-def check_password():
+def check_password_fixed():
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
     if st.session_state.password_correct: return True
@@ -60,23 +67,24 @@ def check_password():
         }
         .sheep-emoji { display: inline-block; animation: sheepBounce 2.2s ease-in-out infinite; }
         
-        /* Giriş formunu görselle aynı genişliğe ve ortaya hizalar */
+        /* Giriş formunun daralmasını önler ve düzgün şekilde ortalar */
         div[data-testid="stForm"], 
         div[data-testid="stVerticalBlockBorderWrapper"]:has(div[data-testid="stForm"]) {
             max-width: 380px !important;
             margin: 0 auto !important;
         }
         
-        /* Giriş alanındaki 'Press Enter to submit form' talimatının üst üste binmesini önlemek için gizliyoruz */
+        /* Streamlit form altındaki talimat yazısını tamamen gizleyerek çakışmayı önler */
         div[data-testid="InputInstructions"] {
             display: none !important;
             visibility: hidden !important;
         }
         
-        /* Şifre alanının yüksekliğini ve yazı boyutunu daha ferah yapıyoruz */
+        /* Input kutusuna yükseklik ve iç boşluk vererek ferahlatır */
         div[data-testid="stTextInput"] input {
-            height: 46px !important;
+            height: 48px !important;
             font-size: 15px !important;
+            padding-right: 40px !important;
         }
         </style>
         <div style="display:flex; align-items:center; justify-content:center; padding:2.5rem 0 1rem; font-family: -apple-system, sans-serif;">
@@ -103,7 +111,6 @@ def check_password():
         unsafe_allow_html=True
     )
 
-    # Kolon sıkıştırmasını kaldırıp direkt CSS ile formu ortalıyoruz, böylece input daralıp üst üste binmiyor.
     with st.form(key="login_form"):
         user_password = st.text_input("Şifre", type="password", key="login_pass_key_global", label_visibility="collapsed", placeholder="Şifrenizi girin")
         submitted = st.form_submit_button("Giriş Yap", use_container_width=True)
@@ -115,7 +122,8 @@ def check_password():
                 st.error("❌ Hatalı Şifre! Erişim reddedildi.")
     return False
 
-if not check_password(): st.stop()
+# Eski check_password yerine yeni örtüşme önleyen check_password_fixed çağrılır.
+if not check_password_fixed(): st.stop()
 
 st.set_page_config(page_title="Kyoun | DCA Hedging Terminal", layout="wide")
 
@@ -208,9 +216,9 @@ supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 supabase: Client = create_client(supabase_url, supabase_key)
 
 def calculate_rsi(series, period=14):
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
+    get_delta = series.diff()
+    gain = (get_delta.where(get_delta > 0, 0)).rolling(period).mean()
+    loss = (-get_delta.where(get_delta < 0, 0)).rolling(period).mean()
     rs = gain / (loss + 1e-9)
     return 100 - (100 / (1 + rs))
 
@@ -513,7 +521,17 @@ if f"{state_prefix}balance_usd" not in st.session_state:
             st.session_state[f"{state_prefix}s_crypto"] = db_data.get("s_crypto", 0.0)
             st.session_state[f"{state_prefix}s_usd_spent"] = db_data.get("s_usd_spent", 0.0)
             st.session_state[f"{state_prefix}s_avg_price"] = db_data.get("s_avg_price", 0.0)
-            st.session_state[f"{state_prefix}log_history"] = db_data.get("log_history") or []
+            
+            # Veritabanındaki log_history içinden gizlenmiş trade_history kayıtlarını ayırarak yükler
+            raw_history = db_data.get("log_history") or []
+            st.session_state[f"{state_prefix}log_history"] = [x for x in raw_history if not x.startswith("STRUCT_TRADE:")]
+            st.session_state[f"{state_prefix}trade_history"] = []
+            for x in raw_history:
+                if x.startswith("STRUCT_TRADE:"):
+                    try:
+                        st.session_state[f"{state_prefix}trade_history"].append(json.loads(x[13:]))
+                    except:
+                        pass
 
             st.session_state[f"{state_prefix}l_status"] = [
                 db_data.get("l_status_0", False),
@@ -553,12 +571,17 @@ if f"{state_prefix}balance_usd" not in st.session_state:
         st.session_state[f"{state_prefix}s_usd_spent"] = 0.0
         st.session_state[f"{state_prefix}s_avg_price"] = 0.0
         st.session_state[f"{state_prefix}log_history"] = []
+        st.session_state[f"{state_prefix}trade_history"] = []
 
 if f"{state_prefix}locked_prices" not in st.session_state: 
     st.session_state[f"{state_prefix}locked_prices"] = None
 
 def save_state_to_db():
     try:
+        # trade_history listesini veritabanına uyumlu şekilde log_history içine gömüyoruz
+        serialized_trades = [f"STRUCT_TRADE:{json.dumps(t)}" for t in st.session_state[f"{state_prefix}trade_history"]]
+        combined_logs = st.session_state[f"{state_prefix}log_history"] + serialized_trades
+        
         data = {
             "coin_symbol": selected_symbol, 
             "balance_usd": st.session_state[f"{state_prefix}balance_usd"],
@@ -580,7 +603,7 @@ def save_state_to_db():
             "s_crypto": st.session_state[f"{state_prefix}s_crypto"], 
             "s_usd_spent": st.session_state[f"{state_prefix}s_usd_spent"], 
             "s_avg_price": st.session_state[f"{state_prefix}s_avg_price"],
-            "log_history": st.session_state[f"{state_prefix}log_history"]
+            "log_history": combined_logs
         }
         supabase.table("bot_state").upsert(data).execute()
     except Exception as e: st.error(f"Veritabanı kaydı başarısız: {type(e).__name__}: {str(e)[:200]}")
@@ -665,6 +688,7 @@ if col_b2.button("🔴 Sıfırla", key="live_reset_all_positions_button", use_co
     st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
     st.session_state[f"{state_prefix}balance_usd"] = 100.0
     st.session_state[f"{state_prefix}locked_prices"] = None
+    st.session_state[f"{state_prefix}trade_history"] = []
     save_state_to_db()
     st.rerun()
 
@@ -843,6 +867,8 @@ def live_dca_fragment():
             l_avg_price = st.session_state[f"{state_prefix}l_avg_price"]
             l_tp = l_avg_price + atr_tp_distance
             l_sl = l_avg_price - (ATR_SL_MULT * atr_k3)
+            
+            # --- LONG STOP-LOSS TETİKLENME BLOKU ---
             if st.session_state[f"{state_prefix}l_status"][2] and current_price <= l_sl:
                 order_result = place_futures_order(selected_symbol, "sell", st.session_state[f"{state_prefix}l_crypto"], is_live=live_trading_enabled, reduce_only=True)
                 l_avg_for_msg = st.session_state[f"{state_prefix}l_avg_price"]
@@ -855,10 +881,26 @@ def live_dca_fragment():
                 msg = f"🔴 *[{mode_tag}] LONG STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {l_avg_for_msg:.2f}\nSatış: {current_price:.2f}\nKapatılan Miktar: {l_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nATR Mesafe: {ATR_SL_MULT}x{atr_k3:.2f}\nK/Z: {l_pnl_usd:+.2f} USDT ({l_pnl_pct:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
+                
+                # İşlem geçmişini (trade_history) kütüphaneye kaydetme
+                trade_record = {
+                    "exit_time": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    "type": "LONG",
+                    "entry_price": l_avg_for_msg,
+                    "exit_price": current_price,
+                    "amount": l_crypto_for_msg,
+                    "pnl_usd": l_pnl_usd,
+                    "pnl_pct": l_pnl_pct,
+                    "result": "🔴 SL (Zarar)"
+                }
+                st.session_state[f"{state_prefix}trade_history"].append(trade_record)
+                
                 st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
                 st.session_state[f"{state_prefix}l_status"] = [False, False, False]
                 st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
                 save_state_to_db()
+                
+            # --- LONG KAR-AL TETİKLENME BLOKU ---
             elif current_price >= l_tp:
                 order_result = place_futures_order(selected_symbol, "sell", st.session_state[f"{state_prefix}l_crypto"], is_live=live_trading_enabled, reduce_only=True)
                 l_avg_for_msg = st.session_state[f"{state_prefix}l_avg_price"]
@@ -871,6 +913,20 @@ def live_dca_fragment():
                 msg = f"🟢 *[{mode_tag}] LONG KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {l_avg_for_msg:.2f}\nSatış: {current_price:.2f}\nKapatılan Miktar: {l_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nKar-Al Mesafesi: {atr_tp_distance:.2f}\nK/Z: {l_pnl_usd:+.2f} USDT ({l_pnl_pct:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
+                
+                # İşlem geçmişini (trade_history) kütüphaneye kaydetme
+                trade_record = {
+                    "exit_time": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    "type": "LONG",
+                    "entry_price": l_avg_for_msg,
+                    "exit_price": current_price,
+                    "amount": l_crypto_for_msg,
+                    "pnl_usd": l_pnl_usd,
+                    "pnl_pct": l_pnl_pct,
+                    "result": "🟢 TP (Kâr)"
+                }
+                st.session_state[f"{state_prefix}trade_history"].append(trade_record)
+                
                 st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
                 st.session_state[f"{state_prefix}l_status"] = [False, False, False]
                 st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
@@ -881,6 +937,8 @@ def live_dca_fragment():
             s_avg_price = st.session_state[f"{state_prefix}s_avg_price"]
             s_stop = s_avg_price + (ATR_SL_MULT * atr_k3)
             s_tp = s_avg_price - atr_tp_distance
+            
+            # --- SHORT STOP-LOSS TETİKLENME BLOKU ---
             if st.session_state[f"{state_prefix}s_status"][2] and current_price >= s_stop:
                 order_result = place_futures_order(selected_symbol, "buy", st.session_state[f"{state_prefix}s_crypto"], is_live=live_trading_enabled, reduce_only=True)
                 s_avg_for_msg = st.session_state[f"{state_prefix}s_avg_price"]
@@ -893,10 +951,26 @@ def live_dca_fragment():
                 msg = f"🔴 *[{mode_tag}] SHORT STOP-LOSS TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {s_avg_for_msg:.2f}\nKapanış: {current_price:.2f}\nKapatılan Miktar: {s_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nATR Mesafe: {ATR_SL_MULT}x{atr_k3:.2f}\nK/Z: {s_pnl_usd:+.2f} USDT ({pnl*100:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
+                
+                # İşlem geçmişini (trade_history) kütüphaneye kaydetme
+                trade_record = {
+                    "exit_time": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    "type": "SHORT",
+                    "entry_price": s_avg_for_msg,
+                    "exit_price": current_price,
+                    "amount": s_crypto_for_msg,
+                    "pnl_usd": s_pnl_usd,
+                    "pnl_pct": pnl * 100,
+                    "result": "🔴 SL (Zarar)"
+                }
+                st.session_state[f"{state_prefix}trade_history"].append(trade_record)
+                
                 st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
                 st.session_state[f"{state_prefix}s_status"] = [False, False, False]
                 st.session_state[f"{state_prefix}s_entry_prices"] = [0.0, 0.0, 0.0]
                 save_state_to_db()
+                
+            # --- SHORT KAR-AL TETİKLENME BLOKU ---
             elif current_price <= s_tp:
                 order_result = place_futures_order(selected_symbol, "buy", st.session_state[f"{state_prefix}s_crypto"], is_live=live_trading_enabled, reduce_only=True)
                 s_avg_for_msg = st.session_state[f"{state_prefix}s_avg_price"]
@@ -909,6 +983,20 @@ def live_dca_fragment():
                 msg = f"🟢 *[{mode_tag}] SHORT KAR-AL TETİKLENDİ ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {s_avg_for_msg:.2f}\nKapanış: {current_price:.2f}\nKapatılan Miktar: {s_crypto_for_msg:.6f} {coin_title.split('/')[0]}\nKar-Al Mesafesi: {atr_tp_distance:.2f}\nK/Z: {s_pnl_usd:+.2f} USDT ({pnl*100:+.2f}%){order_note}"
                 send_telegram_msg(msg)
                 st.session_state[f"{state_prefix}log_history"].append(msg)
+                
+                # İşlem geçmişini (trade_history) kütüphaneye kaydetme
+                trade_record = {
+                    "exit_time": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    "type": "SHORT",
+                    "entry_price": s_avg_for_msg,
+                    "exit_price": current_price,
+                    "amount": s_crypto_for_msg,
+                    "pnl_usd": s_pnl_usd,
+                    "pnl_pct": pnl * 100,
+                    "result": "🟢 TP (Kâr)"
+                }
+                st.session_state[f"{state_prefix}trade_history"].append(trade_record)
+                
                 st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
                 st.session_state[f"{state_prefix}s_status"] = [False, False, False]
                 st.session_state[f"{state_prefix}s_entry_prices"] = [0.0, 0.0, 0.0]
@@ -1039,6 +1127,42 @@ def live_dca_fragment():
             with col_liq_s:
                 st.error("🟢 SHORT LİKİDASYON HAVUZLARI")
                 if not df_short_liq.empty: st.table(df_short_liq.reset_index(drop=True))
+
+            # ======================== 📊 KYOUN TRADING HISTORY (İŞLEM GEÇMİŞİ) ========================
+            st.markdown("---")
+            st.subheader("📊 Kyoun Trade History (İşlem Geçmişi)")
+            
+            trades = st.session_state.get(f"{state_prefix}trade_history", [])
+            if not trades:
+                st.info("Henüz tamamlanmış bir işlem bulunmuyor. Sinyal kademeleri kapatıldığında kâr/zarar verileriniz burada listelenecektir.")
+            else:
+                total_trades = len(trades)
+                wins = sum(1 for t in trades if t["pnl_usd"] > 0)
+                losses = total_trades - wins
+                win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0.0
+                total_net_pnl = sum(t["pnl_usd"] for t in trades)
+                avg_pnl_per_trade = total_net_pnl / total_trades if total_trades > 0 else 0.0
+                
+                # Performans Metrikleri
+                col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+                col_m1.metric("Toplam İşlem", f"{total_trades}")
+                col_m2.metric("Başarı Oranı (Win Rate)", f"{win_rate:.1f}%", f"{wins} Galibiyet / {losses} Mağlubiyet")
+                col_m3.metric("Toplam Net K/Z", f"${total_net_pnl:+.2f}")
+                col_m4.metric("Ortalama İşlem Getirisi", f"${avg_pnl_per_trade:+.2f}")
+                
+                # Tablonun görselleştirilmesi
+                df_history = pd.DataFrame(trades)
+                df_disp = df_history[["exit_time", "type", "entry_price", "exit_price", "amount", "pnl_usd", "pnl_pct", "result"]].copy()
+                df_disp.columns = ["Kapanış Zamanı", "Yön", "Giriş Fiyatı", "Çıkış Fiyatı", "Miktar (BTC)", "Net K/Z ($)", "Net K/Z (%)", "Durum"]
+                
+                # Biçimlendirme
+                df_disp["Giriş Fiyatı"] = df_disp["Giriş Fiyatı"].map(lambda x: f"${x:,.2f}")
+                df_disp["Çıkış Fiyatı"] = df_disp["Çıkış Fiyatı"].map(lambda x: f"${x:,.2f}")
+                df_disp["Miktar (BTC)"] = df_disp["Miktar (BTC)"].map(lambda x: f"{x:.6f}")
+                df_disp["Net K/Z ($)"] = df_disp["Net K/Z ($)"].map(lambda x: f"${x:+.2f}")
+                df_disp["Net K/Z (%)"] = df_disp["Net K/Z (%)"].map(lambda x: f"{x:+.2f}%")
+                
+                st.dataframe(df_disp.sort_index(ascending=False), use_container_width=True)
 
         with col_right:
             st.subheader(f"📊 Kyoun · {coin_title} Canlı Terminal")
@@ -1223,6 +1347,5 @@ with st.sidebar:
     countdown_fragment()
     st.markdown("---")
     # Platformdan güvenli çıkış yapmayı sağlayan çıkış butonu
-    if st.button("🚪 Platformdan Çıkış", key="global_logout_button", use_container_width=True):
-        st.session_state.password_correct = False
+    if st.button("🚪 Platformdan Çıkış", key="global_logout_button", use_container_width=True, on_click=logout_callback):
         st.rerun()
