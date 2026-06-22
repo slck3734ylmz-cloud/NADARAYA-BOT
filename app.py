@@ -5,8 +5,6 @@ import numpy as np
 import time
 import datetime
 import requests
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 import plotly.graph_objects as go
 from supabase import create_client, Client
 
@@ -70,8 +68,6 @@ st.markdown(
     """, 
     unsafe_allow_html=True
 )
-
-plt.style.use('dark_background')
 
 telegram_token = "8736096328:AAH2_3BAIhbOxy9yo7v-L47h9KK3xCbALXE"
 telegram_chat_id = "@kyounkripto"
@@ -487,17 +483,6 @@ def live_dca_fragment():
         current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
         price_change_24h = live_ticker.get('percentage') or 0.0
 
-        raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=120)
-        df_4h_trend = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-        df_4h_trend["EMA_200"] = df_4h_trend["Kapanis"].ewm(span=200, adjust=False).mean()
-        trend_4h = "YUKARI (BOĞA)" if df_4h_trend.iloc[-1]["Kapanis"] > df_4h_trend.iloc[-1]["EMA_200"] else "AŞAĞI (AYI)"
-        warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
-
-        raw_vol = exchange.fetch_ohlcv(selected_symbol, "15m", limit=120)
-        df_vol = pd.DataFrame(raw_vol, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
-        is_volatile = df_vol["Kapanis"].rolling(20).std().iloc[-1] > df_vol["Kapanis"].rolling(20).std().median()
-        market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
-
         raw_1m = exchange.fetch_ohlcv(selected_symbol, "1m", limit=120)
         df_1m = pd.DataFrame(raw_1m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_1m["Zaman"] = pd.to_datetime(df_1m["Zaman"], unit="ms")
@@ -510,11 +495,15 @@ def live_dca_fragment():
         df_5m = calculate_nw_bands(df_5m, 3.0, "_5m")
         df_5m["RSI"] = calculate_rsi(df_5m["Kapanis"])
 
+        # 15m verisi hem volatilite ölçümü hem de kademe hesaplaması için kullanılır,
+        # tek seferde çekilir (önceden iki ayrı API çağrısı yapılıyordu).
         raw_15m = exchange.fetch_ohlcv(selected_symbol, "15m", limit=120)
         df_15m = pd.DataFrame(raw_15m, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_15m["Zaman"] = pd.to_datetime(df_15m["Zaman"], unit="ms")
         df_15m = calculate_nw_bands(df_15m, 3.0, "_15m")
         df_15m["RSI"] = calculate_rsi(df_15m["Kapanis"])
+        is_volatile = df_15m["Kapanis"].rolling(20).std().iloc[-1] > df_15m["Kapanis"].rolling(20).std().median()
+        market_state_label = "⚡ VOLATİL (Trend / Sert Hareket)" if is_volatile else "💤 SAKİN (Yatay Salınım)"
 
         raw_1h = exchange.fetch_ohlcv(selected_symbol, "1h", limit=120)
         df_1h = pd.DataFrame(raw_1h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
@@ -522,11 +511,16 @@ def live_dca_fragment():
         df_1h = calculate_nw_bands(df_1h, 3.0, "_1h")
         df_1h["RSI"] = calculate_rsi(df_1h["Kapanis"])
 
+        # 4h verisi hem genel trend (EMA_200) hem de kademe hesaplaması için kullanılır,
+        # tek seferde çekilir (önceden iki ayrı API çağrısı yapılıyordu).
         raw_4h = exchange.fetch_ohlcv(selected_symbol, "4h", limit=120)
         df_4h = pd.DataFrame(raw_4h, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_4h["Zaman"] = pd.to_datetime(df_4h["Zaman"], unit="ms")
         df_4h = calculate_nw_bands(df_4h, 3.0, "_4h")
         df_4h["RSI"] = calculate_rsi(df_4h["Kapanis"])
+        df_4h["EMA_200"] = df_4h["Kapanis"].ewm(span=200, adjust=False).mean()
+        trend_4h = "YUKARI (BOĞA)" if df_4h.iloc[-1]["Kapanis"] > df_4h.iloc[-1]["EMA_200"] else "AŞAĞI (AYI)"
+        warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
 
         raw_candles_1d = exchange.fetch_ohlcv(selected_symbol, "1d", limit=120)
         df_1d = pd.DataFrame(raw_candles_1d, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
