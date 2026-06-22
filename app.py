@@ -669,6 +669,75 @@ def record_trade(direction, exit_reason, entry_price, exit_price, amount, pnl_us
     }
     st.session_state[f"{state_prefix}trade_history"].append(trade_record)
 
+def close_dca_position(direction, current_price, is_live):
+    """
+    DCA'da açık olan LONG veya SHORT pozisyonu MANUEL olarak (kullanıcı butona
+    bastığında) kapatır. Mantık, otomatik kar-al/stop-loss kapanışıyla birebir
+    aynıdır (marjin geri ekleme + gerçek PNL), sadece tetikleyici farklıdır.
+    direction: 'LONG' veya 'SHORT'
+    """
+    if direction == "LONG":
+        avg = st.session_state[f"{state_prefix}l_avg_price"]
+        amt = st.session_state[f"{state_prefix}l_crypto"]
+        usd_spent = st.session_state[f"{state_prefix}l_usd_spent"]
+        if amt <= 0:
+            return
+        order_result = place_futures_order(selected_symbol, "sell", amt, is_live=is_live, reduce_only=True)
+        pnl_usd = (current_price - avg) * amt
+        pnl_pct = ((current_price / avg) - 1) * 100 if avg > 0 else 0.0
+        margin_used = usd_spent / BOT_LEVERAGE
+        st.session_state[f"{state_prefix}balance_usd"] += margin_used + pnl_usd
+        st.session_state[f"{state_prefix}l_crypto"], st.session_state[f"{state_prefix}l_usd_spent"], st.session_state[f"{state_prefix}l_avg_price"] = 0.0, 0.0, 0.0
+        st.session_state[f"{state_prefix}l_status"] = [False, False, False]
+        st.session_state[f"{state_prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
+    else:
+        avg = st.session_state[f"{state_prefix}s_avg_price"]
+        amt = st.session_state[f"{state_prefix}s_crypto"]
+        usd_spent = st.session_state[f"{state_prefix}s_usd_spent"]
+        if amt <= 0:
+            return
+        order_result = place_futures_order(selected_symbol, "buy", amt, is_live=is_live, reduce_only=True)
+        pnl_pct_ratio = (avg - current_price) / avg if avg > 0 else 0.0
+        pnl_usd = usd_spent * pnl_pct_ratio
+        pnl_pct = pnl_pct_ratio * 100
+        margin_used = usd_spent / BOT_LEVERAGE
+        st.session_state[f"{state_prefix}balance_usd"] += margin_used + pnl_usd
+        st.session_state[f"{state_prefix}s_crypto"], st.session_state[f"{state_prefix}s_usd_spent"], st.session_state[f"{state_prefix}s_avg_price"] = 0.0, 0.0, 0.0
+        st.session_state[f"{state_prefix}s_status"] = [False, False, False]
+        st.session_state[f"{state_prefix}s_entry_prices"] = [0.0, 0.0, 0.0]
+
+    mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
+    order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+    msg = f"✋ *[{mode_tag}] {direction} MANUEL KAPATILDI ({selected_symbol.split(':')[0]})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.2f} USDT ({pnl_pct:+.2f}%){order_note}"
+    send_telegram_msg(msg)
+    st.session_state[f"{state_prefix}log_history"].append(msg)
+    record_trade(direction, "Manuel Kapatma", avg, current_price, amt, pnl_usd, pnl_pct, is_live)
+    save_state_to_db()
+
+def close_scalp_position(current_price, is_live):
+    """Scalp'te açık olan tek pozisyonu MANUEL olarak kapatır."""
+    direction = st.session_state.get(f"{state_prefix}scalp_direction")
+    entry = st.session_state.get(f"{state_prefix}scalp_entry_price", 0.0)
+    amt = st.session_state.get(f"{state_prefix}scalp_crypto", 0.0)
+    if not direction or amt <= 0:
+        return
+    close_side = "sell" if direction == "LONG" else "buy"
+    order_result = place_futures_order(selected_symbol, close_side, amt, is_live=is_live, reduce_only=True)
+    pnl_usd = (current_price - entry) * amt if direction == "LONG" else (entry - current_price) * amt
+    margin_used = (amt * entry) / BOT_LEVERAGE
+    st.session_state[f"{state_prefix}balance_usd"] += margin_used + pnl_usd
+    pnl_pct = (pnl_usd / margin_used * 100) if margin_used > 0 else 0.0
+    mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
+    order_note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+    msg = f"✋ *[{mode_tag}] SCALP {direction} MANUEL KAPATILDI ({selected_symbol.split(':')[0]})*\nGiriş: {entry:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){order_note}"
+    send_telegram_msg(msg)
+    record_trade(f"SCALP-{direction}", "Manuel Kapatma", entry, current_price, amt, pnl_usd, pnl_pct, is_live)
+    st.session_state[f"{state_prefix}scalp_active"] = False
+    st.session_state[f"{state_prefix}scalp_direction"] = None
+    st.session_state[f"{state_prefix}scalp_crypto"] = 0.0
+    st.session_state[f"{state_prefix}scalp_entry_price"] = 0.0
+    save_state_to_db()
+
 # Kademe miktarları sabit BTC değerleridir (bot sadece BTC/USDT üzerinde çalışır).
 # ÖNEMLİ: MEXC futures'ta minimum emir miktarı 0.0001 BTC'dir (1 kontrat = 0.0001 BTC),
 # ve her emir bu birimin tam katı olmalıdır - aksi halde emir borsa tarafından reddedilir.
@@ -789,21 +858,27 @@ st.sidebar.subheader("🎯 Strateji Modu")
 dca_has_position = sum(st.session_state.get(f"{state_prefix}l_status", [False, False, False])) > 0 or sum(st.session_state.get(f"{state_prefix}s_status", [False, False, False])) > 0
 scalp_has_position = st.session_state.get(f"{state_prefix}scalp_active", False)
 
-if dca_has_position:
-    st.sidebar.warning("📊 DCA'da açık pozisyon var. Scalp Modu, DCA pozisyonu kapanana kadar kilitli.")
+# Mod seçimi HER ZAMAN serbesttir (kullanıcı istediği an görüntü/seçimi değiştirebilir).
+# Ama gerçek pozisyon AÇMA mantığı, açık pozisyonu olan tarafa kilitli kalır - bu sayede
+# aynı paritede iki stratejinin pozisyonu MEXC'te birleşme riski hiç oluşmaz. Kullanıcı
+# diğer modu "seçse" de, o mod açık pozisyon kapanana kadar yeni emir gönderemez.
+selected_mode_radio = st.sidebar.radio(
+    "Aktif Strateji",
+    options=["📊 DCA (Kademeli)", "⚡ Scalp (Tek Giriş, Hızlı Çıkış)"],
+    index=0,
+    key="strategy_mode_radio",
+    label_visibility="collapsed"
+)
+selected_mode = "DCA" if selected_mode_radio.startswith("📊") else "SCALP"
+
+if dca_has_position and selected_mode == "SCALP":
+    st.sidebar.warning("📊 DCA'da açık pozisyon var. Scalp seçili görünse de, DCA pozisyonu kapanana kadar yeni Scalp emri açılmaz.")
     strategy_mode = "DCA"
-elif scalp_has_position:
-    st.sidebar.warning("⚡ Scalp'te açık pozisyon var. DCA Modu, Scalp pozisyonu kapanana kadar kilitli.")
+elif scalp_has_position and selected_mode == "DCA":
+    st.sidebar.warning("⚡ Scalp'te açık pozisyon var. DCA seçili görünse de, Scalp pozisyonu kapanana kadar yeni DCA emri açılmaz.")
     strategy_mode = "SCALP"
 else:
-    strategy_mode = st.sidebar.radio(
-        "Aktif Strateji",
-        options=["📊 DCA (Kademeli)", "⚡ Scalp (Tek Giriş, Hızlı Çıkış)"],
-        index=0,
-        key="strategy_mode_radio",
-        label_visibility="collapsed"
-    )
-    strategy_mode = "DCA" if strategy_mode.startswith("📊") else "SCALP"
+    strategy_mode = selected_mode
 
 @st.fragment(run_every="10s")
 def live_dca_fragment():
@@ -1260,6 +1335,9 @@ def live_dca_fragment():
                     pl1.metric("Maliyet Ort.", f"${l_avg:,.2f}")
                     pl2.metric("Miktar", f"{l_amt:.6f} {coin_title.split('/')[0]}")
                     pl3.metric("K/Z", f"${l_pnl_usd:+,.2f}", f"{l_pnl_pct:+.2f}%")
+                    if st.button("✋ LONG Pozisyonu Manuel Kapat", key="close_long_manual_btn", disabled=not is_admin, use_container_width=True):
+                        close_dca_position("LONG", current_price, live_trading_enabled)
+                        st.rerun(scope="fragment")
 
                 if s_active:
                     s_avg = st.session_state[f"{state_prefix}s_avg_price"]
@@ -1272,6 +1350,9 @@ def live_dca_fragment():
                     ps1.metric("Maliyet Ort.", f"${s_avg:,.2f}")
                     ps2.metric("Miktar", f"{s_amt:.6f} {coin_title.split('/')[0]}")
                     ps3.metric("K/Z", f"${s_pnl_usd:+,.2f}", f"{s_pnl_pct:+.2f}%")
+                    if st.button("✋ SHORT Pozisyonu Manuel Kapat", key="close_short_manual_btn", disabled=not is_admin, use_container_width=True):
+                        close_dca_position("SHORT", current_price, live_trading_enabled)
+                        st.rerun(scope="fragment")
 
         st.markdown("---")
         if st.session_state[f"{state_prefix}log_history"]:
@@ -1425,6 +1506,9 @@ def scalp_fragment():
                 col_sp2.metric("Kar-Al / Stop", f"${entry+scalp_tp_distance:,.2f} / ${entry-scalp_sl_distance:,.2f}")
             else:
                 col_sp2.metric("Kar-Al / Stop", f"${entry-scalp_tp_distance:,.2f} / ${entry+scalp_sl_distance:,.2f}")
+            if st.button("✋ Scalp Pozisyonu Manuel Kapat", key="close_scalp_manual_btn", disabled=not is_admin, use_container_width=True):
+                close_scalp_position(current_price, live_trading_enabled)
+                st.rerun(scope="fragment")
         else:
             st.caption("Açık scalp pozisyonu yok. 1m NW bandı + RSI sinyali geldiğinde otomatik açılacak.")
 
