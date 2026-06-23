@@ -201,7 +201,14 @@ def nadaraya_watson_estimator(src, h=8):
 def calculate_nw_bands(df, std_multiplier, col_suffix, h=8, std_window=20):
     df["NW_Merkez"] = nadaraya_watson_estimator(df["Kapanis"].values, h=h)
     df["Fark"] = df["Kapanis"] - df["NW_Merkez"]
-    df["Sapma_Std"] = df["Fark"].rolling(window=std_window).std()
+    # EWM (üstel ağırlıklı) standart sapma kullanılır - klasik rolling().std() ile
+    # MATEMATİKSEL OLARAK AYNI MANTIK (yine standart sapma + sabit 3.0 çarpan),
+    # tek fark: rolling() sabit genişlikte bir "kare pencere" kullandığı için bir
+    # spike pencereden tam çıktığı anda bandı ANİDEN daraltır (test edildi: 20 barlık
+    # pencerede spike +19'da hâlâ şişik, +20'de aniden eski seviyeye düşüyor). EWM ise
+    # aynı std_window'u "span" olarak kullanarak eşdeğer bir hafıza süresi sağlar, ama
+    # etkiyi KADEMELİ olarak söndürür - ani sıçrama yerine yumuşak bir geçiş olur.
+    df["Sapma_Std"] = df["Fark"].ewm(span=std_window, min_periods=std_window).std()
     df[f"NW_Ust{col_suffix}"] = df["NW_Merkez"] + (std_multiplier * df["Sapma_Std"])
     df[f"NW_Alt{col_suffix}"] = df["NW_Merkez"] - (std_multiplier * df["Sapma_Std"])
     return df
