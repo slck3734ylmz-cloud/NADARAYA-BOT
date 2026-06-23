@@ -419,7 +419,7 @@ def load_state(strategy_key):
     db_error = None
     if supabase:
         try:
-            q = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).order("id", descending=True).limit(1).execute()
+            q = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).order("id", desc=True).limit(1).execute()
             if q.data:
                 d = q.data[0]
                 col = lambda name: f"{strategy_key}_{name}"
@@ -516,6 +516,12 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
     tf_names = list(dfs_by_tf.keys())
     dfk = list(dfs_by_tf.values())
 
+    # Telegram mesajlarında DCA ve Scalp'in karıştırılmamasını sağlamak için her
+    # stratejinin kendine özgü bir emoji ön eki vardır (DCA: 📊, SCALP: ⚡) - bu,
+    # botun arayüzünde kullanılan simgelerle de tutarlıdır.
+    strategy_emoji = "📊" if strategy_key == "dca" else "⚡"
+    strategy_tag = f"{strategy_emoji} {strategy_label}"
+
     raw_alt = [df.iloc[-2][f"NW_Alt_{tf}"] for df, tf in zip(dfk, tf_names)]
     raw_ust = [df.iloc[-2][f"NW_Ust_{tf}"] for df, tf in zip(dfk, tf_names)]
     atr_vals = [df.iloc[-2]["ATR"] for df in dfk]
@@ -601,7 +607,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
             mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
             note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
             emoji = "🔴" if exit_reason == "Stop-Loss" else "🟢"
-            msg = f"{emoji} *[{mode_tag}] {strategy_label} LONG {exit_reason} ({coin_title})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){note}"
+            msg = f"{emoji} *[{mode_tag}] {strategy_tag} LONG {exit_reason} ({coin_title})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){note}"
             send_telegram_msg(msg)
             st.session_state[f"{base_prefix}log_history"].append(msg)
             record_trade(strategy_label, "LONG", exit_reason, avg, current_price, amt, pnl_usd, pnl_pct, is_live)
@@ -633,7 +639,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
             mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
             note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
             emoji = "🔴" if exit_reason == "Stop-Loss" else "🟢"
-            msg = f"{emoji} *[{mode_tag}] {strategy_label} SHORT {exit_reason} ({coin_title})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){note}"
+            msg = f"{emoji} *[{mode_tag}] {strategy_tag} SHORT {exit_reason} ({coin_title})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){note}"
             send_telegram_msg(msg)
             st.session_state[f"{base_prefix}log_history"].append(msg)
             record_trade(strategy_label, "SHORT", exit_reason, avg, current_price, amt, pnl_usd, pnl_pct, is_live)
@@ -662,7 +668,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
             st.session_state[f"{prefix}l_avg_price"] = st.session_state[f"{prefix}l_usd_spent"] / st.session_state[f"{prefix}l_crypto"]
             mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
             note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-            msg = f"📈 *[{mode_tag}] {strategy_label} LONG K{idx+1} SATIN ALINDI ({coin_title})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} BTC\nRSI: {rsi_vals[idx]:.1f} (<{RSI_MIDPOINT}){note}"
+            msg = f"📈 *[{mode_tag}] {strategy_tag} LONG K{idx+1} SATIN ALINDI ({coin_title})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} BTC\nRSI: {rsi_vals[idx]:.1f} (<{RSI_MIDPOINT}){note}"
             send_telegram_msg(msg)
             st.session_state[f"{base_prefix}log_history"].append(msg)
             save_state_to_db()
@@ -687,7 +693,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
             st.session_state[f"{prefix}s_avg_price"] = st.session_state[f"{prefix}s_usd_spent"] / st.session_state[f"{prefix}s_crypto"]
             mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
             note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-            msg = f"📈 *[{mode_tag}] {strategy_label} SHORT K{idx+1} AÇILDI ({coin_title})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} BTC\nRSI: {rsi_vals[idx]:.1f} (>{RSI_MIDPOINT}){note}"
+            msg = f"📈 *[{mode_tag}] {strategy_tag} SHORT K{idx+1} AÇILDI ({coin_title})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} BTC\nRSI: {rsi_vals[idx]:.1f} (>{RSI_MIDPOINT}){note}"
             send_telegram_msg(msg)
             st.session_state[f"{base_prefix}log_history"].append(msg)
             save_state_to_db()
@@ -720,7 +726,8 @@ def close_position_manual(strategy_label, prefix, direction, current_price, is_l
     st.session_state[f"{base_prefix}balance_usd"] += margin_used + pnl_usd
     mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
     note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-    msg = f"✋ *[{mode_tag}] {strategy_label} {direction} MANUEL KAPATILDI ({coin_title})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){note}"
+    strategy_emoji = "📊" if strategy_label == "DCA" else "⚡"
+    msg = f"✋ *[{mode_tag}] {strategy_emoji} {strategy_label} {direction} MANUEL KAPATILDI ({coin_title})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){note}"
     send_telegram_msg(msg)
     st.session_state[f"{base_prefix}log_history"].append(msg)
     record_trade(strategy_label, direction, "Manuel Kapatma", avg, current_price, amt, pnl_usd, pnl_pct, is_live)
@@ -770,8 +777,17 @@ dca_has_position = sum(st.session_state[f"{dca_prefix}l_status"]) > 0 or sum(st.
 scalp_has_position = sum(st.session_state[f"{scalp_prefix}l_status"]) > 0 or sum(st.session_state[f"{scalp_prefix}s_status"]) > 0
 if not is_admin:
     st.sidebar.caption("🔒 Sadece yönetici değiştirebilir.")
+
+# Admin için isteğe bağlı manuel kilit: yanlışlıkla strateji değiştirmeyi
+# önlemek için, radio butonu bilerek pasif hale getirilebilir.
+strategy_lock = st.sidebar.toggle("🔐 Strateji Seçimini Kilitle", value=st.session_state.get("strategy_select_locked", False), key="strategy_lock_toggle", disabled=not is_admin)
+st.session_state["strategy_select_locked"] = strategy_lock
+radio_disabled = not is_admin or strategy_lock
+
 selected_mode_radio = st.sidebar.radio("Strateji", options=["📊 DCA (Kademeli)", "⚡ Scalp (Kademeli, Hızlı)"],
-                                        index=0, key="strategy_mode_radio", label_visibility="collapsed", disabled=not is_admin)
+                                        index=0, key="strategy_mode_radio", label_visibility="collapsed", disabled=radio_disabled)
+if strategy_lock and is_admin:
+    st.sidebar.caption("🔐 Strateji seçimi kilitli - değiştirmek için kilidi açın.")
 selected_mode = "DCA" if selected_mode_radio.startswith("📊") else "SCALP"
 if dca_has_position and selected_mode == "SCALP":
     st.sidebar.caption("📊 DCA açık — Scalp yeni emir açamaz.")
@@ -835,6 +851,17 @@ st.markdown(
         background: #161B22; border: 1px solid #2A2E37; border-radius: 10px;
         padding: 8px 16px; margin-bottom: 0.8rem; font-size: 0.85rem; color: #B7BDC6;
     }
+    /* Sekmeler arası ve genel blok boşluklarını sıkılaştır - dağınık görünümü önler */
+    div[data-testid="stTabs"] { margin-top: 0.2rem; }
+    div[data-testid="stTabs"] button[role="tab"] { padding: 0.4rem 0.9rem; }
+    [data-testid="stVerticalBlock"] { gap: 0.5rem !important; }
+    div[data-testid="column"] { padding: 0 0.35rem; }
+    /* Kademe/pozisyon kutularını daha kompakt ve tutarlı yap */
+    div[data-testid="stVerticalBlockBorderWrapper"] { padding: 0.5rem 0.1rem; }
+    /* Yenile butonunu metric kutularıyla aynı yükseklikte hizala */
+    button[kind="secondary"] { height: 2.6rem; }
+    /* Yatay çizgilerin (divider) gereksiz fazla boşluk açmasını önle */
+    [data-testid="stMain"] hr { margin: 0.6rem 0 !important; }
     </style>
     """,
     unsafe_allow_html=True
@@ -877,12 +904,16 @@ def status_bar_fragment():
     dca_pos = sum(st.session_state.get(f"{dca_prefix}l_status", [False]*3)) > 0 or sum(st.session_state.get(f"{dca_prefix}s_status", [False]*3)) > 0
     scalp_pos = sum(st.session_state.get(f"{scalp_prefix}l_status", [False]*3)) > 0 or sum(st.session_state.get(f"{scalp_prefix}s_status", [False]*3)) > 0
 
-    top1, top2, top3, top4, top5 = st.columns(5)
+    top1, top2, top3, top4, top5, top6 = st.columns([1, 1, 1, 1, 1, 0.7])
     top1.metric("💳 Bakiye", f"${balance_now:,.2f}")
     top2.metric("📈 Toplam K/Z", f"${total_pnl_all:+,.4f}")
     top3.metric("📊 DCA Pozisyon", "Açık" if dca_pos else "Yok")
     top4.metric("⚡ Scalp Pozisyon", "Açık" if scalp_pos else "Yok")
     top5.metric("🎯 Aktif Mod", selected_mode)
+    with top6:
+        st.markdown("<div style='height: 1.7rem'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Yenile", key="manual_refresh_btn", use_container_width=True, help="Sayfayı anında yeniler, 10s beklemeden"):
+            st.rerun()
 
 status_bar_fragment()
 st.divider()
@@ -1049,7 +1080,16 @@ def dca_fragment():
             tf_keys = ["1m", "5m", "15m"]
             labels = ["K1 (1m)", "K2 (5m)", "K3 (15m)"]
 
-        result = run_staged_strategy("dca", "DCA", dca_prefix, current_price, dfs_by_tf, DCA_AMOUNTS, live_trading_enabled, manual_lock, allow_new_entries=(selected_mode == "DCA"))
+        # GÜVENLİK KURALI: DCA yeni emir açabilmesi için SADECE "selected_mode==DCA"
+        # yeterli değildir - Scalp'te açık pozisyon varsa DCA da yeni emir açamaz.
+        # Aksi halde, aynı paritede (BTC/USDT) iki bağımsız strateji aynı anda
+        # pozisyon açarsa, MEXC borsasında bu pozisyonlar TEK bir pozisyon olarak
+        # birleşir (aynı sembol+yön = otomatik birleşme) ve botun ayrı tuttuğu
+        # muhasebe (ortalama maliyet, kademe durumu) gerçek borsa pozisyonuyla
+        # uyuşmaz hale gelir.
+        scalp_has_pos_now = sum(st.session_state[f"{scalp_prefix}l_status"]) > 0 or sum(st.session_state[f"{scalp_prefix}s_status"]) > 0
+        dca_can_enter = (selected_mode == "DCA") and not scalp_has_pos_now
+        result = run_staged_strategy("dca", "DCA", dca_prefix, current_price, dfs_by_tf, DCA_AMOUNTS, live_trading_enabled, manual_lock, allow_new_entries=dca_can_enter)
         chart_dfs = {"1m": df_1m, "5m": df_5m, "15m": df_15m, "1h": df_1h, "4h": df_4h, "1d": df_1d}
 
         info1, info2, info3, info4 = st.columns(4)
@@ -1090,7 +1130,11 @@ def scalp_fragment():
         dfs_by_tf = {"1m": df_1m, "5m": df_5m, "15m": df_15m}
         labels = ["K1 (1m)", "K2 (5m)", "K3 (15m)"]
 
-        result = run_staged_strategy("scalp", "SCALP", scalp_prefix, current_price, dfs_by_tf, SCALP_AMOUNTS, live_trading_enabled, manual_lock, allow_new_entries=(selected_mode == "SCALP"))
+        # GÜVENLİK KURALI: Aynı mantığın simetriği - DCA'da açık pozisyon varsa
+        # Scalp da yeni emir açamaz (bkz. dca_fragment içindeki açıklama).
+        dca_has_pos_now = sum(st.session_state[f"{dca_prefix}l_status"]) > 0 or sum(st.session_state[f"{dca_prefix}s_status"]) > 0
+        scalp_can_enter = (selected_mode == "SCALP") and not dca_has_pos_now
+        result = run_staged_strategy("scalp", "SCALP", scalp_prefix, current_price, dfs_by_tf, SCALP_AMOUNTS, live_trading_enabled, manual_lock, allow_new_entries=scalp_can_enter)
         chart_dfs = {"1m": df_1m, "5m": df_5m, "15m": df_15m}
 
         info1, info2, info3 = st.columns(3)
