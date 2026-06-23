@@ -201,25 +201,12 @@ def nadaraya_watson_estimator(src, h=8):
 def calculate_nw_bands(df, std_multiplier, col_suffix, h=8, std_window=20):
     df["NW_Merkez"] = nadaraya_watson_estimator(df["Kapanis"].values, h=h)
     df["Fark"] = df["Kapanis"] - df["NW_Merkez"]
-    # EWM (üstel ağırlıklı) standart sapma kullanılır - klasik rolling().std() ile
-    # MATEMATİKSEL OLARAK AYNI MANTIK (yine standart sapma + sabit 3.0 çarpan),
-    # tek fark: rolling() sabit genişlikte bir "kare pencere" kullandığı için bir
-    # spike pencereden tam çıktığı anda bandı ANİDEN daraltır (test edildi: 20 barlık
-    # pencerede spike +19'da hâlâ şişik, +20'de aniden eski seviyeye düşüyor). EWM ise
-    # aynı std_window'u "span" olarak kullanarak eşdeğer bir hafıza süresi sağlar, ama
-    # etkiyi KADEMELİ olarak söndürür - ani sıçrama yerine yumuşak bir geçiş olur.
     df["Sapma_Std"] = df["Fark"].ewm(span=std_window, min_periods=std_window).std()
     df[f"NW_Ust{col_suffix}"] = df["NW_Merkez"] + (std_multiplier * df["Sapma_Std"])
     df[f"NW_Alt{col_suffix}"] = df["NW_Merkez"] - (std_multiplier * df["Sapma_Std"])
     return df
 
 def fetch_with_retry(fetch_fn, max_retries=2, base_delay=0.5):
-    """
-    MEXC API çağrılarını geçici hatalara (ağ kesintisi, 429 rate limit, MEXC'in
-    kendi 5XX sunucu hataları) karşı dayanıklı hale getirir. Bu, "arada server
-    hatası veriyor" şikayetinin ana çözümüdür - tek seferlik geçici bir hata artık
-    fragment'i tamamen başarısız kılmıyor, kısa bir bekleme ile otomatik tekrar dener.
-    """
     last_error = None
     for attempt in range(max_retries + 1):
         try:
@@ -231,9 +218,6 @@ def fetch_with_retry(fetch_fn, max_retries=2, base_delay=0.5):
     raise last_error
 
 def fetch_tf_data(symbol, tf):
-    """Bir zaman dilimi için OHLCV çekip NW/RSI/ATR'yi hesaplar. Tüm zaman
-    dilimi bazlı işlemler bu tek fonksiyondan geçer - DCA ve Scalp aynı veriyi
-    aynı şekilde hesaplar, kod tekrarı ve tutarsızlık riski ortadan kalkar."""
     p = TF_PARAMS[tf]
     raw = fetch_with_retry(lambda: exchange.fetch_ohlcv(symbol, tf, limit=p["limit"]))
     df = pd.DataFrame(raw, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
@@ -258,10 +242,6 @@ def get_btc_funding_rate():
 
 @st.cache_data(ttl=300)
 def estimate_liquidation_pools(symbol, is_volatile=False):
-    """TAHMİNİ likidasyon haritası - gerçek borsa verisi değildir. Son N saatin
-    mum verisine göre, yaygın kaldıraç seviyelerinin (10x/25x/50x/100x) çakıştığı
-    olası yoğunlaşma noktalarını tahmin eder. Pencere: sakin modda 3 gün, volatil
-    modda 7 gün (kademe sisteminin volatil modda 1 güne kadar çıkmasıyla tutarlı)."""
     try:
         lookback_hours = 168 if is_volatile else 72
         raw = fetch_with_retry(lambda: exchange.fetch_ohlcv(symbol, "1h", limit=lookback_hours))
@@ -318,9 +298,6 @@ def send_telegram_msg(message):
         pass
 
 def place_futures_order(symbol, side, amount, leverage=None, is_live=False, reduce_only=False):
-    """MEXC Futures emir gönderme. Kağıt modda hiçbir gerçek emir göndermez.
-    Canlı modda göndermeden önce miktarın MEXC'in minimum/kontrat kuralına
-    (0.0001 BTC'nin tam katı) uyup uymadığını doğrular."""
     if leverage is None:
         leverage = BOT_LEVERAGE
     if not is_live:
@@ -393,8 +370,6 @@ def draw_plotly_chart(df_subset, price_col, alt_band_col, ust_band_col, title, l
     return fig
 
 # ================= ORTAK STATE ŞEMASI =================
-# DCA ve Scalp AYNI state şemasını kullanır, sadece state_key_prefix farklıdır.
-# Bu, iki stratejinin kodunun birbirinden kopyalanıp tutarsız hale gelmesini önler.
 selected_symbol = "BTC/USDT:USDT"
 coin_title = selected_symbol.split(':')[0]
 base_prefix = f"{selected_symbol}_"
@@ -408,8 +383,6 @@ def empty_position_state():
     }
 
 def load_state(strategy_key):
-    """strategy_key: 'dca' veya 'scalp'. Her ikisi de Supabase'de tek bir satırda,
-    farklı kolon önekleriyle (dca_ / scalp_) saklanır."""
     prefix = f"{base_prefix}{strategy_key}_"
     if f"{prefix}loaded" in st.session_state:
         return prefix
@@ -419,7 +392,8 @@ def load_state(strategy_key):
     db_error = None
     if supabase:
         try:
-            q = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).order("id", descending=True).limit(1).execute()
+            # DÜZELTME: descending=True → desc=True (supabase-py yeni versiyonu)
+            q = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).order("id", desc=True).limit(1).execute()
             if q.data:
                 d = q.data[0]
                 col = lambda name: f"{strategy_key}_{name}"
@@ -440,10 +414,6 @@ def load_state(strategy_key):
                 st.session_state[f"{prefix}locked_prices"] = d.get(col("locked_prices"))
                 loaded = True
         except Exception as e:
-            # ÖNEMLİ: Hata artık sessizce yutulmuyor. Eğer Supabase'den veri
-            # çekilemezse (eksik kolon, bağlantı sorunu, yetki hatası vb.), bu
-            # durum kullanıcıya açıkça gösterilir - aksi halde "geçmiş sıfırlandı"
-            # sanılan durumun gerçek sebebi (DB hatası) hiç görülemezdi.
             db_error = f"{type(e).__name__}: {str(e)[:200]}"
 
     for k, v in defaults.items():
@@ -503,16 +473,7 @@ def record_trade(strategy_label, direction, exit_reason, entry_price, exit_price
     st.session_state.setdefault(f"{base_prefix}trade_history", []).append(trade_record)
 
 # ================= ORTAK KADEMELİ POZİSYON MOTORU =================
-# Hem DCA hem Scalp BU TEK fonksiyonu kullanır. Davranış farkı sadece dışarıdan
-# verilen parametrelerden gelir: hangi zaman dilimleri, hangi miktarlar, hangi
-# etiket. Mantığın kendisi (kademe sırası, RSI onayı, ATR bazlı kar-al/stop-loss,
-# komisyon güvenliği) HER İKİ STRATEJİ İÇİN BİREBİR AYNIDIR.
 def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs_by_tf, amounts, is_live, manual_lock=False, allow_new_entries=True):
-    """
-    dfs_by_tf: {tf_name: dataframe} - 3 kademe için kullanılacak, [k1_df, k2_df, k3_df] sırasıyla.
-    amounts: [k1_miktar, k2_miktar, k3_miktar] BTC cinsinden.
-    Döner: (nw_alt_levels, nw_ust_levels, rsi_levels, labels, active_engine_desc)
-    """
     tf_names = list(dfs_by_tf.keys())
     dfk = list(dfs_by_tf.values())
 
@@ -520,12 +481,6 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
     raw_ust = [df.iloc[-2][f"NW_Ust_{tf}"] for df, tf in zip(dfk, tf_names)]
     atr_vals = [df.iloc[-2]["ATR"] for df in dfk]
 
-    # GELİŞMİŞ KADEME SİSTEMİ: Önceden K2/K3, K1'den sadece yapay/sabit bir %0.3
-    # mesafede olacak şekilde ZORLANIYORDU - bantlar gerçekte birbirine çok yakınsa
-    # bile kademe "ayrışmış" sayılıyordu. Artık her kademenin GERÇEK NW bandı
-    # kullanılır; bir sonraki kademe, öncekinden MIN_STAGE_GAP_ATR_MULT x ATR kadar
-    # gerçekten ayrışana kadar "hazır değil" sayılır ve fiyat o seviyeye gelse de
-    # açılmaz - sabırla bir sonraki gerçek Nadaraya-Watson değeri beklenir.
     MIN_STAGE_GAP_ATR_MULT = 0.5
     alt_base = [raw_alt[0]]
     alt_ready = [True]
@@ -562,8 +517,6 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
         locked = st.session_state[lock_key]
         nw_alt = locked["alt"]
         nw_ust = locked["ust"]
-        # Eski kayıtlarda (yeni alanlar eklenmeden önce) alt_ready/ust_ready
-        # olmayabilir - geriye dönük uyumluluk için güvenli varsayılan kullanılır.
         alt_ready = locked.get("alt_ready", alt_ready)
         ust_ready = locked.get("ust_ready", ust_ready)
     else:
@@ -580,7 +533,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
     scale_factor = tp_distance / raw_tp_distance if raw_tp_distance > 0 else 1.0
     sl_distance = ATR_SL_MULT * atr_k3 * scale_factor
 
-    # --- LONG ÇIKIŞ (sadece K3 alındıysa stop-loss aktif) ---
+    # --- LONG ÇIKIŞ ---
     if sum(l_status) > 0:
         avg = st.session_state[f"{prefix}l_avg_price"]
         amt = st.session_state[f"{prefix}l_crypto"]
@@ -643,7 +596,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
             save_state_to_db()
             s_status = st.session_state[f"{prefix}s_status"]
 
-    # --- LONG GİRİŞ (sıralı kademe, RSI onaylı, GERÇEK bant ayrışması beklenir) ---
+    # --- LONG GİRİŞ ---
     for idx in range(3):
         if not allow_new_entries:
             break
@@ -668,7 +621,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
             save_state_to_db()
             break
 
-    # --- SHORT GİRİŞ (GERÇEK bant ayrışması beklenir) ---
+    # --- SHORT GİRİŞ ---
     for idx in range(3):
         if not allow_new_entries:
             break
@@ -700,7 +653,6 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
     }
 
 def close_position_manual(strategy_label, prefix, direction, current_price, is_live):
-    """LONG veya SHORT pozisyonu manuel olarak (kullanıcı butonu) kapatır."""
     side_field = "l" if direction == "LONG" else "s"
     avg = st.session_state[f"{prefix}{side_field}_avg_price"]
     amt = st.session_state[f"{prefix}{side_field}_crypto"]
@@ -734,7 +686,7 @@ dca_prefix = load_state("dca")
 scalp_prefix = load_state("scalp")
 is_admin = st.session_state.get("user_role") == "admin"
 
-# ================= SIDEBAR (sade, sadece ayarlar) =================
+# ================= SIDEBAR =================
 st.sidebar.markdown("## 🐑 Kyoun")
 role_label = "👑 Yönetici" if is_admin else "👁️ İzleyici"
 st.sidebar.caption(f"BTC/USDT Futures · Giriş: {role_label}")
@@ -807,19 +759,16 @@ if btc_funding.get("rate") is not None:
     fr_color = "green" if rate_pct < 0 else "red"
     st.sidebar.caption(f"💸 Fonlama: :{fr_color}[{rate_pct:+.4f}%]")
 
-# ================= ÜST PERFORMANS ÇUBUĞU (her zaman görünür) =================
+# ================= ÜST PERFORMANS ÇUBUĞU =================
 st.markdown(
     """
     <style>
     .kyoun-topbar { display:flex; gap:0; padding:0; margin-bottom:0.6rem; }
     div[data-testid="stMetric"] { background:#161B22; border:1px solid #2A2E37; border-radius:10px; padding:10px 14px; }
     div[data-testid="stMetricLabel"] { font-size:0.78rem; }
-    /* Sidebar ile ana içerik arası boşluğu sıkılaştır */
     [data-testid="stMainBlockContainer"] { padding-top: 1.2rem !important; }
     section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] { gap: 0.4rem; }
-    /* Kademe durumu kutularındaki uzun metinlerin taşmasını önle, satır aralığını düzelt */
     div[data-testid="stVerticalBlockBorderWrapper"] p { line-height: 1.45 !important; }
-    /* Canlı nabız animasyonu */
     @keyframes pulse-dot {
         0%   { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7); }
         70%  { box-shadow: 0 0 0 6px rgba(46, 204, 113, 0); }
@@ -840,11 +789,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Canlı durum çubuğu + üst metrikler - ayrı bir fragment olarak çalışır (1s),
-# böylece "Sistem Aktif" göstergesi ve saat gerçekten canlı kalır, sayfa tam
-# yenilenmeden de güncellenir. dca_fragment/scalp_fragment her başarılı tarama
-# sonunda kendi zaman damgasını (dca_last_success / scalp_last_success) yazar;
-# bu fragment o damgaları okuyup "kaç saniye önce güncellendi" bilgisini gösterir.
 @st.fragment(run_every="1s")
 def status_bar_fragment():
     now_tr = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)
@@ -855,7 +799,6 @@ def status_bar_fragment():
     now_epoch = time.time()
     dca_age = f"{int(now_epoch - dca_last)}s önce" if dca_last else "bekleniyor..."
     scalp_age = f"{int(now_epoch - scalp_last)}s önce" if scalp_last else "bekleniyor..."
-    # 25 saniyeden fazla güncelleme yoksa (2.5 tarama döngüsü kaçmışsa) uyarı rengi.
     dca_stale = dca_last is None or (now_epoch - dca_last) > 25
     scalp_stale = scalp_last is None or (now_epoch - scalp_last) > 25
     dca_dot = "#e74c3c" if dca_stale else "#2ecc71"
@@ -887,9 +830,7 @@ def status_bar_fragment():
 status_bar_fragment()
 st.divider()
 
-# ================= ORTAK LİKİDASYON HARİTASI (açılan pencere/popover) =================
-# Ana ekranı sade tutmak için ayrı bir popover'da gösterilir, hem DCA hem Scalp
-# panelinde aynı buton/pencere kullanılır - kod tekrarı ve görsel tutarsızlık olmaz.
+# ================= LİKİDASYON HARİTASI =================
 def render_liquidity_popover(is_volatile, key_ns):
     days_label = "7" if is_volatile else "3"
     with st.popover(f"🎯 Tahmini Likidasyon Haritası ({days_label} günlük)", use_container_width=True):
@@ -910,9 +851,7 @@ def render_liquidity_popover(is_volatile, key_ns):
             else:
                 st.caption("Veri yok.")
 
-# ================= ORTAK PANEL RENDER FONKSİYONU =================
-# DCA ve Scalp AYNI görsel yapıyı kullanır: Grafik -> Kademe Durumu -> Açık
-# Pozisyon Özeti -> (varsa) Manuel Kapat. Görsel tutarsızlık böylece imkansız hale gelir.
+# ================= PANEL RENDER =================
 def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_keys, labels, result, is_live, key_ns):
     l_status = st.session_state[f"{prefix}l_status"]
     s_status = st.session_state[f"{prefix}s_status"]
@@ -1100,7 +1039,7 @@ def scalp_fragment():
         st.caption("Her zaman 1m/5m/15m kullanır (piyasa durumundan bağımsız). DCA ile aynı kademe mantığı, ayrı/bağımsız pozisyon.")
 
         render_strategy_panel("SCALP", scalp_prefix, current_price, chart_dfs, ["1m", "5m", "15m"], labels, result, live_trading_enabled, "scalp")
-        render_liquidity_popover(False, "scalp")  # Scalp her zaman kısa vadeli - sabit 3 günlük pencere
+        render_liquidity_popover(False, "scalp")
         st.session_state["scalp_last_success"] = time.time()
 
     except Exception as e:
@@ -1173,5 +1112,3 @@ with tab_history:
                         st.session_state[f"{base_prefix}trade_history"] = []
                         save_state_to_db()
                         st.rerun()
-
-
