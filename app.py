@@ -676,71 +676,59 @@ dca_prefix = load_state("dca")
 scalp_prefix = load_state("scalp")
 is_admin = st.session_state.get("user_role") == "admin"
 
-# ================= SIDEBAR =================
+# ================= SIDEBAR (sade, sadece ayarlar) =================
 st.sidebar.markdown("## 🐑 Kyoun")
-st.sidebar.caption("BTC/USDT Futures Hedging Terminal")
 role_label = "👑 Yönetici" if is_admin else "👁️ İzleyici"
-st.sidebar.caption(f"Giriş: {role_label}")
+st.sidebar.caption(f"BTC/USDT Futures · Giriş: {role_label}")
 if st.sidebar.button("🚪 Çıkış Yap", key="logout_button_global", use_container_width=True):
     st.session_state.password_correct = False
     st.session_state.user_role = None
     st.rerun()
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("💳 Cüzdan Durumu")
-col_s1, col_s2 = st.sidebar.columns(2)
-col_s1.metric("Bakiye", f"${st.session_state.get(f'{base_prefix}balance_usd', 100.0):,.2f}")
-col_s2.metric("Kaldıraç", f"{BOT_LEVERAGE}x")
-st.sidebar.caption(f"🔥 {coin_title} · Cross Margin")
-
-st.sidebar.markdown("---")
-btc_funding = get_btc_funding_rate()
-if "error" in btc_funding:
-    st.sidebar.warning(f"Fonlama oranı alınamadı: {btc_funding['error']}")
-elif btc_funding.get("rate") is not None:
-    rate_pct = btc_funding["rate"] * 100.0
-    fr_color = "green" if rate_pct < 0 else "red"
-    st.sidebar.markdown(f"💸 **Fonlama Oranı:** :{fr_color}[{rate_pct:+.4f}%]")
-    if btc_funding.get("next_time"):
-        try:
-            next_dt = datetime.datetime.fromtimestamp(btc_funding["next_time"] / 1000, tz=datetime.timezone.utc)
-            st.sidebar.caption(f"Sonraki ödeme: {next_dt.strftime('%H:%M UTC')}")
-        except Exception:
-            pass
-else:
-    st.sidebar.write("Fonlama oranı yükleniyor...")
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ İşlem Modu (MEXC Futures)")
+st.sidebar.divider()
+st.sidebar.markdown("**⚙️ İşlem Modu**")
 api_keys_present = bool(MEXC_API_KEY and MEXC_API_SECRET)
 if not is_admin:
-    st.sidebar.info("👁️ İzleyici modundasınız. Canlı Mod sadece yönetici erişimiyle açılabilir.")
+    st.sidebar.caption("👁️ İzleyici: Canlı Mod kilitli.")
 elif not api_keys_present:
-    st.sidebar.warning("⚠️ MEXC API anahtarı tanımlı değil. Sadece Kağıt Mod kullanılabilir.")
-
-trading_mode = st.sidebar.radio("Mod Seçimi", options=["📝 Kağıt Mod (Emir Gönderilmez)", "🔴 CANLI MOD (Gerçek Emir Gönderilir)"],
-                                  index=0, key="trading_mode_radio", disabled=not (is_admin and api_keys_present))
+    st.sidebar.caption("⚠️ API anahtarı yok: Sadece Kağıt Mod.")
+trading_mode = st.sidebar.radio("Mod", options=["📝 Kağıt Mod", "🔴 Canlı Mod"], index=0,
+                                  key="trading_mode_radio", disabled=not (is_admin and api_keys_present), label_visibility="collapsed")
 live_trading_enabled = trading_mode.startswith("🔴") and api_keys_present and is_admin
 if live_trading_enabled:
-    st.sidebar.error("🔴 CANLI MOD AKTİF — Gerçek MEXC futures hesabınızda gerçek emir gönderilecek!")
+    st.sidebar.error("🔴 CANLI — gerçek emir gönderilecek!")
     if not st.sidebar.checkbox("Riskleri anladım, onaylıyorum", key="live_trading_confirm_checkbox"):
         live_trading_enabled = False
-        st.sidebar.info("Onay kutusu işaretlenmeden canlı emir gönderilmeyecek.")
 else:
-    st.sidebar.success("📝 Kağıt Mod: Sinyaller hesaplanır, gerçek emir gönderilmez.")
+    st.sidebar.caption("📝 Sinyaller simüle ediliyor, gerçek emir yok.")
 
-manual_lock = st.sidebar.toggle("🔒 Bekleyen Seviyeleri Dondur", value=st.session_state.get(f"{base_prefix}manual_lock_db", False), key="live_manual_lock_toggle", disabled=not is_admin)
+st.sidebar.divider()
+st.sidebar.markdown("**🎯 Aktif Strateji**")
+dca_has_position = sum(st.session_state[f"{dca_prefix}l_status"]) > 0 or sum(st.session_state[f"{dca_prefix}s_status"]) > 0
+scalp_has_position = sum(st.session_state[f"{scalp_prefix}l_status"]) > 0 or sum(st.session_state[f"{scalp_prefix}s_status"]) > 0
+if not is_admin:
+    st.sidebar.caption("🔒 Sadece yönetici değiştirebilir.")
+selected_mode_radio = st.sidebar.radio("Strateji", options=["📊 DCA (Kademeli)", "⚡ Scalp (Kademeli, Hızlı)"],
+                                        index=0, key="strategy_mode_radio", label_visibility="collapsed", disabled=not is_admin)
+selected_mode = "DCA" if selected_mode_radio.startswith("📊") else "SCALP"
+if dca_has_position and selected_mode == "SCALP":
+    st.sidebar.caption("📊 DCA açık — Scalp yeni emir açamaz.")
+elif scalp_has_position and selected_mode == "DCA":
+    st.sidebar.caption("⚡ Scalp açık — DCA yeni emir açamaz.")
+
+manual_lock = st.sidebar.toggle("🔒 Seviyeleri Dondur", value=st.session_state.get(f"{base_prefix}manual_lock_db", False), key="live_manual_lock_toggle", disabled=not is_admin)
 if is_admin and manual_lock != st.session_state.get(f"{base_prefix}manual_lock_db", False):
     st.session_state[f"{base_prefix}manual_lock_db"] = manual_lock
     if not manual_lock:
         st.session_state[f"{base_prefix}locked_prices"] = None
     save_state_to_db()
 
+st.sidebar.divider()
 col_b1, col_b2 = st.sidebar.columns(2)
-if col_b1.button("🔔 Telegram Test", key="telegram_test_btn", use_container_width=True, disabled=not is_admin):
+if col_b1.button("🔔 Test", key="telegram_test_btn", use_container_width=True, disabled=not is_admin):
     send_telegram_msg("👋 *Bağlantı Testi:* Başarılı!")
-    st.sidebar.success("Mesaj gönderildi!")
-if col_b2.button("🔴 Tümünü Sıfırla", key="reset_all_btn", use_container_width=True, disabled=not is_admin):
+    st.sidebar.success("Gönderildi!")
+if col_b2.button("🔴 Sıfırla", key="reset_all_btn", use_container_width=True, disabled=not is_admin):
     for strategy_key in ("dca", "scalp"):
         prefix = f"{base_prefix}{strategy_key}_"
         for k, v in empty_position_state().items():
@@ -750,23 +738,126 @@ if col_b2.button("🔴 Tümünü Sıfırla", key="reset_all_btn", use_container_
     save_state_to_db()
     st.rerun()
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("🎯 Strateji Modu")
-dca_has_position = sum(st.session_state[f"{dca_prefix}l_status"]) > 0 or sum(st.session_state[f"{dca_prefix}s_status"]) > 0
-scalp_has_position = sum(st.session_state[f"{scalp_prefix}l_status"]) > 0 or sum(st.session_state[f"{scalp_prefix}s_status"]) > 0
+st.sidebar.divider()
+btc_funding = get_btc_funding_rate()
+if btc_funding.get("rate") is not None:
+    rate_pct = btc_funding["rate"] * 100.0
+    fr_color = "green" if rate_pct < 0 else "red"
+    st.sidebar.caption(f"💸 Fonlama: :{fr_color}[{rate_pct:+.4f}%]")
 
-if not is_admin:
-    st.sidebar.caption("🔒 Strateji modu sadece yönetici tarafından değiştirilebilir.")
-selected_mode_radio = st.sidebar.radio("Aktif Strateji", options=["📊 DCA (Kademeli)", "⚡ Scalp (Kademeli, Hızlı)"],
-                                        index=0, key="strategy_mode_radio", label_visibility="collapsed", disabled=not is_admin)
-selected_mode = "DCA" if selected_mode_radio.startswith("📊") else "SCALP"
+# ================= ÜST PERFORMANS ÇUBUĞU (her zaman görünür) =================
+st.markdown(
+    """
+    <style>
+    .kyoun-topbar { display:flex; gap:0; padding:0; margin-bottom:0.6rem; }
+    div[data-testid="stMetric"] { background:#161B22; border:1px solid #2A2E37; border-radius:10px; padding:10px 14px; }
+    div[data-testid="stMetricLabel"] { font-size:0.78rem; }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-if dca_has_position and selected_mode == "SCALP":
-    st.sidebar.warning("📊 DCA'da açık pozisyon var. Scalp seçili görünse de yeni Scalp emri açılmaz.")
-elif scalp_has_position and selected_mode == "DCA":
-    st.sidebar.warning("⚡ Scalp'te açık pozisyon var. DCA seçili görünse de yeni DCA emri açılmaz.")
+trade_history_all = st.session_state.get(f"{base_prefix}trade_history", [])
+total_pnl_all = sum(t["pnl_usd"] for t in trade_history_all) if trade_history_all else 0.0
+balance_now = st.session_state.get(f"{base_prefix}balance_usd", 100.0)
 
-# ================= DCA FRAGMENT (Volatiliteye göre dinamik zaman dilimi) =================
+top1, top2, top3, top4, top5 = st.columns(5)
+top1.metric("💳 Bakiye", f"${balance_now:,.2f}")
+top2.metric("📈 Toplam K/Z", f"${total_pnl_all:+,.4f}")
+top3.metric("📊 DCA Pozisyon", "Açık" if dca_has_position else "Yok")
+top4.metric("⚡ Scalp Pozisyon", "Açık" if scalp_has_position else "Yok")
+top5.metric("🎯 Aktif Mod", selected_mode)
+st.divider()
+
+# ================= ORTAK PANEL RENDER FONKSİYONU =================
+# DCA ve Scalp AYNI görsel yapıyı kullanır: Grafik -> Kademe Durumu -> Açık
+# Pozisyon Özeti -> (varsa) Manuel Kapat. Görsel tutarsızlık böylece imkansız hale gelir.
+def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_keys, labels, result, is_live, key_ns):
+    l_status = st.session_state[f"{prefix}l_status"]
+    s_status = st.session_state[f"{prefix}s_status"]
+    l_avg = st.session_state[f"{prefix}l_avg_price"]
+    s_avg = st.session_state[f"{prefix}s_avg_price"]
+    l_crypto = st.session_state[f"{prefix}l_crypto"]
+    s_crypto = st.session_state[f"{prefix}s_crypto"]
+
+    col_chart, col_side = st.columns([1.7, 1])
+
+    with col_chart:
+        tabs = st.tabs([f"⏱️ {tf}" for tf in tf_keys])
+        for tab, tf in zip(tabs, tf_keys):
+            with tab:
+                df_subset = chart_dfs[tf].tail(TF_PARAMS[tf]["limit"])
+                st.plotly_chart(
+                    draw_plotly_chart(df_subset, "Kapanis", f"NW_Alt_{tf}", f"NW_Ust_{tf}", f"{coin_title} - {tf}", l_avg, s_avg),
+                    use_container_width=True, key=f"{key_ns}_chart_{tf}", config=PLOTLY_CONFIG
+                )
+
+        st.markdown("##### 🪜 Kademe Durumu")
+        col_kl, col_ks = st.columns(2)
+        with col_kl:
+            st.caption("📈 LONG")
+            for i in range(3):
+                if l_status[i]:
+                    st.success(f"✅ {labels[i]} — Alındı @ {st.session_state[f'{prefix}l_entry_prices'][i]:,.2f}")
+                else:
+                    st.container(border=True).write(f"⏳ {labels[i]} — Bekliyor @ {result['nw_alt'][i]:,.2f}")
+        with col_ks:
+            st.caption("📉 SHORT")
+            for i in range(3):
+                if s_status[i]:
+                    st.success(f"✅ {labels[i]} — Açıldı @ {st.session_state[f'{prefix}s_entry_prices'][i]:,.2f}")
+                else:
+                    st.container(border=True).write(f"⏳ {labels[i]} — Bekliyor @ {result['nw_ust'][i]:,.2f}")
+
+    with col_side:
+        st.markdown(f"##### 💼 {strategy_label} Açık Pozisyon")
+        has_long = sum(l_status) > 0
+        has_short = sum(s_status) > 0
+
+        if not has_long and not has_short:
+            st.info("Şu an açık pozisyon yok. Kademe sinyali geldiğinde otomatik açılacak.")
+        else:
+            if has_long:
+                pnl_usd = (current_price - l_avg) * l_crypto
+                pnl_pct = ((current_price / l_avg) - 1) * 100 if l_avg > 0 else 0.0
+                with st.container(border=True):
+                    st.markdown(f"**📈 LONG** · {sum(l_status)}/3 kademe")
+                    cL1, cL2 = st.columns(2)
+                    cL1.metric("Maliyet Ort.", f"${l_avg:,.2f}")
+                    cL2.metric("Miktar", f"{l_crypto:.6f} BTC")
+                    color = "normal" if pnl_usd >= 0 else "inverse"
+                    st.metric("Anlık K/Z", f"${pnl_usd:+,.4f}", f"{pnl_pct:+.2f}%")
+                    st.caption(f"🟢 Kar-Al: {l_avg + result['tp_distance']:,.2f}" + (f" · 🔴 Stop: {l_avg - result['sl_distance']:,.2f}" if l_status[2] else " · Stop: K3'te aktif olacak"))
+                    if st.button("✋ LONG Kapat", key=f"{key_ns}_close_long", disabled=not is_admin, use_container_width=True):
+                        close_position_manual(strategy_label, prefix, "LONG", current_price, is_live)
+                        st.rerun(scope="fragment")
+            if has_short:
+                pnl_ratio = (s_avg - current_price) / s_avg if s_avg > 0 else 0.0
+                s_usd_spent = st.session_state[f"{prefix}s_usd_spent"]
+                pnl_usd = s_usd_spent * pnl_ratio
+                pnl_pct = pnl_ratio * 100
+                with st.container(border=True):
+                    st.markdown(f"**📉 SHORT** · {sum(s_status)}/3 kademe")
+                    cS1, cS2 = st.columns(2)
+                    cS1.metric("Maliyet Ort.", f"${s_avg:,.2f}")
+                    cS2.metric("Miktar", f"{s_crypto:.6f} BTC")
+                    st.metric("Anlık K/Z", f"${pnl_usd:+,.4f}", f"{pnl_pct:+.2f}%")
+                    st.caption(f"🟢 Kar-Al: {s_avg - result['tp_distance']:,.2f}" + (f" · 🔴 Stop: {s_avg + result['sl_distance']:,.2f}" if s_status[2] else " · Stop: K3'te aktif olacak"))
+                    if st.button("✋ SHORT Kapat", key=f"{key_ns}_close_short", disabled=not is_admin, use_container_width=True):
+                        close_position_manual(strategy_label, prefix, "SHORT", current_price, is_live)
+                        st.rerun(scope="fragment")
+
+        st.markdown("##### 🎯 RSI Filtreleri")
+        rsi_cols = st.columns(3)
+        for i, col in enumerate(rsi_cols):
+            with col:
+                long_ok = "✅" if result["rsi_vals"][i] < RSI_MIDPOINT else "❌"
+                short_ok = "✅" if result["rsi_vals"][i] > RSI_MIDPOINT else "❌"
+                st.caption(labels[i])
+                st.code(f"{result['rsi_vals'][i]:.1f}")
+                st.caption(f"L:{long_ok} S:{short_ok}")
+
+# ================= DCA FRAGMENT =================
 @st.fragment(run_every="10s")
 def dca_fragment():
     try:
@@ -781,14 +872,11 @@ def dca_fragment():
         df_4h = fetch_tf_data(selected_symbol, "4h")
         df_1d = fetch_tf_data(selected_symbol, "1d")
 
-        # 4h trend (EMA200) - ayrı, daha uzun (250 mum) bir veri çekişiyle hesaplanır.
         raw_4h_trend = exchange.fetch_ohlcv(selected_symbol, "4h", limit=250)
         df_4h_trend = pd.DataFrame(raw_4h_trend, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_4h_trend["EMA_200"] = df_4h_trend["Kapanis"].ewm(span=200, adjust=False).mean()
         trend_4h = "YUKARI (BOĞA)" if df_4h_trend.iloc[-1]["Kapanis"] > df_4h_trend.iloc[-1]["EMA_200"] else "AŞAĞI (AYI)"
-        warning_msg = "SHORT açarken DİKKATLİ olun!" if trend_4h == "YUKARI (BOĞA)" else "LONG açarken DİKKATLİ olun!"
 
-        # Volatilite: fiyat std'si VE hacim onayı birlikte gerekir.
         price_std_now = df_15m["Kapanis"].rolling(20).std().iloc[-1]
         price_std_median = df_15m["Kapanis"].rolling(20).std().median()
         vol_now = df_15m["Hacim"].rolling(20).mean().iloc[-1]
@@ -799,124 +887,44 @@ def dca_fragment():
 
         if is_volatile:
             market_state_label = "⚡ VOLATİL (Hacim Onaylı)"
+            market_state_short = "⚡ Volatil"
             dfs_by_tf = {"15m": df_15m, "1h": df_1h, "1d": df_1d}
-            labels = ["Kademe 1 (15m)", "Kademe 2 (1h)", "Kademe 3 (1d)"]
-            engine_desc = "⚡ VOLATİL MOTOR (15m / 1h / 1d Hiyerarşisi)"
-        elif price_is_volatile and not volume_confirms:
-            market_state_label = "⚠️ FİYAT OYNAK AMA HACİM DÜŞÜK (Sakin Sayılır)"
-            dfs_by_tf = {"1m": df_1m, "5m": df_5m, "15m": df_15m}
-            labels = ["Kademe 1 (1m)", "Kademe 2 (5m)", "Kademe 3 (15m)"]
-            engine_desc = "💤 SAKİN MOTOR (1m / 5m / 15m Hiyerarşisi)"
+            tf_keys = ["15m", "1h", "1d"]
+            labels = ["K1 (15m)", "K2 (1h)", "K3 (1d)"]
         else:
-            market_state_label = "💤 SAKİN (Yatay Salınım)"
+            reason = "Fiyat Oynak/Hacim Düşük" if price_is_volatile else "Yatay Salınım"
+            market_state_label = f"💤 SAKİN ({reason})"
+            market_state_short = "💤 Sakin"
             dfs_by_tf = {"1m": df_1m, "5m": df_5m, "15m": df_15m}
-            labels = ["Kademe 1 (1m)", "Kademe 2 (5m)", "Kademe 3 (15m)"]
-            engine_desc = "💤 SAKİN MOTOR (1m / 5m / 15m Hiyerarşisi)"
+            tf_keys = ["1m", "5m", "15m"]
+            labels = ["K1 (1m)", "K2 (5m)", "K3 (15m)"]
 
         result = run_staged_strategy("dca", "DCA", dca_prefix, current_price, dfs_by_tf, DCA_AMOUNTS, live_trading_enabled, manual_lock, allow_new_entries=(selected_mode == "DCA"))
+        chart_dfs = {"1m": df_1m, "5m": df_5m, "15m": df_15m, "1h": df_1h, "4h": df_4h, "1d": df_1d}
 
-        df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol, is_volatile)
+        info1, info2, info3, info4 = st.columns(4)
+        info1.metric("Anlık Fiyat", f"${current_price:,.2f}", f"{price_change_24h:+.2f}%")
+        info2.metric("Piyasa Durumu", market_state_short)
+        info3.metric("4h Trend", trend_4h)
+        info4.metric("Son Güncelleme", (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)).strftime('%H:%M:%S'))
+        st.caption(f"Aktif Motor: {' / '.join(tf_keys)} hiyerarşisi · Kar-Al mesafe: {result['tp_distance']:.2f} · Stop-Loss mesafe: {result['sl_distance']:.2f}")
 
-        # --- ARAYÜZ ---
-        col_left, col_right = st.columns([1.6, 1])
-        with col_left:
-            st.subheader("📈 DCA · Canlı Fiyat ve Nadaraya-Watson Zarf Grafikleri")
-            tabs = st.tabs(["⏱️ 1m", "⏱️ 5m", "⏱️ 15m", "⏱️ 1h", "⏱️ 4h", "🌎 1d"])
-            chart_dfs = {"1m": df_1m, "5m": df_5m, "15m": df_15m, "1h": df_1h, "4h": df_4h, "1d": df_1d}
-            l_avg_disp = st.session_state[f"{dca_prefix}l_avg_price"]
-            s_avg_disp = st.session_state[f"{dca_prefix}s_avg_price"]
-            for tab, tf in zip(tabs, chart_dfs.keys()):
-                with tab:
-                    df_subset = chart_dfs[tf].tail(TF_PARAMS[tf]["limit"])
-                    st.plotly_chart(draw_plotly_chart(df_subset, "Kapanis", f"NW_Alt_{tf}", f"NW_Ust_{tf}", f"{coin_title} - {tf} Grafik", l_avg_disp, s_avg_disp),
-                                     use_container_width=True, key=f"{dca_prefix}chart_{tf}", config=PLOTLY_CONFIG)
+        render_strategy_panel("DCA", dca_prefix, current_price, chart_dfs, ["1m", "5m", "15m", "1h", "4h", "1d"], ["K1", "K2", "K3"], result, live_trading_enabled, "dca")
+        # Aktif olan kademe etiketlerini ayrıca küçük bir notla göster (hangi TF kullanılıyor)
+        st.caption(f"Şu an aktif kademe zaman dilimleri: {labels[0]}, {labels[1]}, {labels[2]}")
 
-            st.markdown("---")
-            st.write("🎯 **DCA Sinyal Yönetim Kartı**")
-            st.caption(f"Kar-Al: {result['tp_distance']:.2f} mesafe · Stop-Loss: {result['sl_distance']:.2f} mesafe (Kademe 3 ATR: {result['atr_k3']:.2f})")
-            col_l, col_s = st.columns(2)
-            with col_l:
-                st.info("📈 LONG KADEMELERİ")
-                l_status = st.session_state[f"{dca_prefix}l_status"]
-                for i in range(3):
-                    status_txt = f"✅ Alındı ({st.session_state[f'{dca_prefix}l_avg_price']:.2f})" if l_status[i] else f"⏳ Bekliyor ({result['nw_alt'][i]:.2f})"
-                    st.write(f"**{labels[i]}:** {status_txt}")
-                if sum(l_status) > 0:
-                    st.success(f"🟢 **KAR-AL:** `{l_avg_disp + result['tp_distance']:.2f}`")
-                    if l_status[2]:
-                        st.error(f"🔴 **STOP-LOSS:** `{l_avg_disp - result['sl_distance']:.2f}`")
-                    if st.button("✋ LONG Manuel Kapat", key="dca_close_long_btn", disabled=not is_admin, use_container_width=True):
-                        close_position_manual("DCA", dca_prefix, "LONG", current_price, live_trading_enabled)
-                        st.rerun(scope="fragment")
-            with col_s:
-                st.error("📉 SHORT KADEMELERİ")
-                s_status = st.session_state[f"{dca_prefix}s_status"]
-                for i in range(3):
-                    status_txt = f"✅ Açıldı ({st.session_state[f'{dca_prefix}s_avg_price']:.2f})" if s_status[i] else f"⏳ Bekliyor ({result['nw_ust'][i]:.2f})"
-                    st.write(f"**{labels[i]}:** {status_txt}")
-                if sum(s_status) > 0:
-                    st.success(f"🟢 **KAR-AL:** `{s_avg_disp - result['tp_distance']:.2f}`")
-                    if s_status[2]:
-                        st.error(f"🔴 **STOP-LOSS:** `{s_avg_disp + result['sl_distance']:.2f}`")
-                    if st.button("✋ SHORT Manuel Kapat", key="dca_close_short_btn", disabled=not is_admin, use_container_width=True):
-                        close_position_manual("DCA", dca_prefix, "SHORT", current_price, live_trading_enabled)
-                        st.rerun(scope="fragment")
-
-            st.markdown("---")
-            liq_days = 7 if is_volatile else 3
-            st.subheader(f"🎯 {liq_days} Günlük {coin_title.split('/')[0]} Tahmini Likidasyon Yoğunluk Haritası")
-            st.caption(f"⚠️ Gerçek borsa verisi değildir. Son {liq_days*24} saatin mum verisine göre tahmindir.")
-            col_liq_l, col_liq_s = st.columns(2)
-            with col_liq_l:
-                st.info("🔴 LONG LİKİDASYON HAVUZLARI")
+        with st.expander(f"🎯 Tahmini Likidasyon Haritası ({'7' if is_volatile else '3'} günlük)"):
+            df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol, is_volatile)
+            st.caption("⚠️ Gerçek borsa verisi değildir, yaygın kaldıraç seviyelerine göre tahmindir.")
+            cliq1, cliq2 = st.columns(2)
+            with cliq1:
+                st.caption("🔴 LONG Havuzları")
                 if not df_long_liq.empty:
                     st.table(df_long_liq.reset_index(drop=True))
-            with col_liq_s:
-                st.error("🟢 SHORT LİKİDASYON HAVUZLARI")
+            with cliq2:
+                st.caption("🟢 SHORT Havuzları")
                 if not df_short_liq.empty:
                     st.table(df_short_liq.reset_index(drop=True))
-
-        with col_right:
-            st.subheader(f"📊 Kyoun · {coin_title} DCA Terminal")
-            tr_time = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)
-            st.caption(f"🕒 Son güncelleme: {tr_time.strftime('%H:%M:%S')} (TR)")
-            if live_trading_enabled:
-                st.error("🔴 CANLI MOD: Sinyaller gerçek emir olarak gönderiliyor!")
-            else:
-                st.info("📝 KAĞIT MOD: Sinyaller simüle ediliyor.")
-            col_p1, col_p2 = st.columns(2)
-            col_p1.metric("Anlık Fiyat", f"${current_price:,.2f}")
-            col_p2.metric("24s Değişim", f"{price_change_24h:+.2f}%")
-            if manual_lock:
-                st.warning("🔒 SEVİYELER DONDURULDU")
-            else:
-                st.success("🔓 CANLI TAKİP AKTİF")
-            st.markdown("---")
-            st.write(f"**Piyasa Durumu:** {market_state_label}")
-            st.caption(f"Aktif Motor: {engine_desc}")
-            st.markdown("---")
-            col_t1, col_t2 = st.columns(2)
-            col_t1.metric("4h Genel Trend", trend_4h)
-            if trend_4h == "YUKARI (BOĞA)":
-                st.success(f"🛡️ {warning_msg}")
-            else:
-                st.error(f"🛡️ {warning_msg}")
-            st.markdown("---")
-            st.write(f"🎯 **Aktif Kademe RSI Filtreleri** (eşik: {RSI_MIDPOINT})")
-            cols_rsi = st.columns(3)
-            for i, col in enumerate(cols_rsi):
-                with col:
-                    long_ok = "✅" if result["rsi_vals"][i] < RSI_MIDPOINT else "❌"
-                    short_ok = "✅" if result["rsi_vals"][i] > RSI_MIDPOINT else "❌"
-                    st.write(f"**{labels[i]}**")
-                    st.code(f"RSI: {result['rsi_vals'][i]:.1f}")
-                    st.caption(f"L: {long_ok}  S: {short_ok}")
-
-        st.markdown("---")
-        if st.session_state[f"{base_prefix}log_history"]:
-            st.write("📜 **Son Sinyaller (Log)**")
-            for log in reversed(st.session_state[f"{base_prefix}log_history"][-3:]):
-                st.write(log)
 
     except Exception as e:
         st.error(f"DCA hatası, 10s sonra tekrar denenecek: {type(e).__name__}: {str(e)[:200]}")
@@ -925,78 +933,36 @@ def dca_fragment():
             if has_pos:
                 last_warn = st.session_state.get(f"{base_prefix}dca_last_warn", 0)
                 if time.time() - last_warn > 300:
-                    send_telegram_msg(f"⚠️ *DCA BOT HATA ALDI* ({type(e).__name__})\nAçık pozisyonunuz var, kontrol edemiyor. MEXC hesabınızı kontrol edin.")
+                    send_telegram_msg(f"⚠️ *DCA BOT HATA ALDI* ({type(e).__name__})\nAçık pozisyonunuz var, kontrol edemiyor.")
                     st.session_state[f"{base_prefix}dca_last_warn"] = time.time()
         except Exception:
             pass
         time.sleep(5)
 
-# ================= SCALP FRAGMENT (Her zaman sabit kısa zaman dilimi, kademeli) =================
+# ================= SCALP FRAGMENT =================
 @st.fragment(run_every="10s")
 def scalp_fragment():
     try:
         live_ticker = exchange.fetch_ticker(selected_symbol)
         current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
+        price_change_24h = live_ticker.get('percentage') or 0.0
 
         df_1m = fetch_tf_data(selected_symbol, "1m")
         df_5m = fetch_tf_data(selected_symbol, "5m")
         df_15m = fetch_tf_data(selected_symbol, "15m")
         dfs_by_tf = {"1m": df_1m, "5m": df_5m, "15m": df_15m}
-        labels = ["Kademe 1 (1m)", "Kademe 2 (5m)", "Kademe 3 (15m)"]
+        labels = ["K1 (1m)", "K2 (5m)", "K3 (15m)"]
 
         result = run_staged_strategy("scalp", "SCALP", scalp_prefix, current_price, dfs_by_tf, SCALP_AMOUNTS, live_trading_enabled, allow_new_entries=(selected_mode == "SCALP"))
+        chart_dfs = {"1m": df_1m, "5m": df_5m, "15m": df_15m}
 
-        st.markdown("---")
-        st.subheader("⚡ Scalp · Kademeli Hızlı Strateji")
+        info1, info2, info3 = st.columns(3)
+        info1.metric("Anlık Fiyat", f"${current_price:,.2f}", f"{price_change_24h:+.2f}%")
+        info2.metric("Kar-Al Mesafe", f"${result['tp_distance']:.2f}")
+        info3.metric("Stop-Loss Mesafe", f"${result['sl_distance']:.2f}")
         st.caption("Her zaman 1m/5m/15m kullanır (piyasa durumundan bağımsız). DCA ile aynı kademe mantığı, ayrı/bağımsız pozisyon.")
-        if selected_mode != "SCALP" and not (sum(st.session_state[f"{scalp_prefix}l_status"]) > 0 or sum(st.session_state[f"{scalp_prefix}s_status"]) > 0):
-            st.caption("Scalp Modu şu an pasif. Sidebar'dan 'Strateji Modu' bölümünden aktif edebilirsiniz.")
 
-        col_sc1, col_sc2, col_sc3 = st.columns(3)
-        col_sc1.metric("Anlık Fiyat", f"${current_price:,.2f}")
-        col_sc2.metric("Kar-Al Mesafe", f"${result['tp_distance']:.2f}")
-        col_sc3.metric("Stop-Loss Mesafe", f"${result['sl_distance']:.2f}")
-
-        l_avg_disp = st.session_state[f"{scalp_prefix}l_avg_price"]
-        s_avg_disp = st.session_state[f"{scalp_prefix}s_avg_price"]
-
-        col_l, col_s = st.columns(2)
-        with col_l:
-            st.info("📈 SCALP LONG KADEMELERİ")
-            l_status = st.session_state[f"{scalp_prefix}l_status"]
-            for i in range(3):
-                status_txt = f"✅ Alındı ({l_avg_disp:.2f})" if l_status[i] else f"⏳ Bekliyor ({result['nw_alt'][i]:.2f})"
-                st.write(f"**{labels[i]}:** {status_txt}")
-            if sum(l_status) > 0:
-                st.success(f"🟢 **KAR-AL:** `{l_avg_disp + result['tp_distance']:.2f}`")
-                if l_status[2]:
-                    st.error(f"🔴 **STOP-LOSS:** `{l_avg_disp - result['sl_distance']:.2f}`")
-                if st.button("✋ Scalp LONG Manuel Kapat", key="scalp_close_long_btn", disabled=not is_admin, use_container_width=True):
-                    close_position_manual("SCALP", scalp_prefix, "LONG", current_price, live_trading_enabled)
-                    st.rerun(scope="fragment")
-        with col_s:
-            st.error("📉 SCALP SHORT KADEMELERİ")
-            s_status = st.session_state[f"{scalp_prefix}s_status"]
-            for i in range(3):
-                status_txt = f"✅ Açıldı ({s_avg_disp:.2f})" if s_status[i] else f"⏳ Bekliyor ({result['nw_ust'][i]:.2f})"
-                st.write(f"**{labels[i]}:** {status_txt}")
-            if sum(s_status) > 0:
-                st.success(f"🟢 **KAR-AL:** `{s_avg_disp - result['tp_distance']:.2f}`")
-                if s_status[2]:
-                    st.error(f"🔴 **STOP-LOSS:** `{s_avg_disp + result['sl_distance']:.2f}`")
-                if st.button("✋ Scalp SHORT Manuel Kapat", key="scalp_close_short_btn", disabled=not is_admin, use_container_width=True):
-                    close_position_manual("SCALP", scalp_prefix, "SHORT", current_price, live_trading_enabled)
-                    st.rerun(scope="fragment")
-
-        st.write(f"🎯 **Scalp RSI Filtreleri** (eşik: {RSI_MIDPOINT})")
-        cols_rsi = st.columns(3)
-        for i, col in enumerate(cols_rsi):
-            with col:
-                long_ok = "✅" if result["rsi_vals"][i] < RSI_MIDPOINT else "❌"
-                short_ok = "✅" if result["rsi_vals"][i] > RSI_MIDPOINT else "❌"
-                st.write(f"**{labels[i]}**")
-                st.code(f"RSI: {result['rsi_vals'][i]:.1f}")
-                st.caption(f"L: {long_ok}  S: {short_ok}")
+        render_strategy_panel("SCALP", scalp_prefix, current_price, chart_dfs, ["1m", "5m", "15m"], labels, result, live_trading_enabled, "scalp")
 
     except Exception as e:
         st.error(f"Scalp hatası, 10s sonra tekrar denenecek: {type(e).__name__}: {str(e)[:200]}")
@@ -1005,73 +971,66 @@ def scalp_fragment():
             if has_pos:
                 last_warn = st.session_state.get(f"{base_prefix}scalp_last_warn", 0)
                 if time.time() - last_warn > 300:
-                    send_telegram_msg(f"⚠️ *SCALP BOT HATA ALDI* ({type(e).__name__})\nAçık pozisyonunuz var, kontrol edemiyor. MEXC hesabınızı kontrol edin.")
+                    send_telegram_msg(f"⚠️ *SCALP BOT HATA ALDI* ({type(e).__name__})\nAçık pozisyonunuz var, kontrol edemiyor.")
                     st.session_state[f"{base_prefix}scalp_last_warn"] = time.time()
         except Exception:
             pass
         time.sleep(5)
 
-# ================= PERFORMANS PANELİ =================
-@st.fragment(run_every="1s")
-def countdown_fragment():
-    if "scan_start_time" not in st.session_state:
-        st.session_state.scan_start_time = time.time()
-    elapsed = time.time() - st.session_state.scan_start_time
-    remaining = max(0, 10 - int(elapsed))
-    if remaining > 0:
-        st.write(f"🔄 Sonraki taramaya: **{remaining}** saniye...")
+# ================= ANA SEKME YAPISI =================
+tab_dca, tab_scalp, tab_history = st.tabs(["📊 DCA", "⚡ Scalp", "📜 İşlem Geçmişi"])
+
+with tab_dca:
+    dca_fragment()
+
+with tab_scalp:
+    scalp_fragment()
+
+with tab_history:
+    st.markdown("##### 📜 İşlem Geçmişi ve Performans")
+    trade_history = st.session_state.get(f"{base_prefix}trade_history", [])
+
+    if not trade_history:
+        st.info("Henüz kapanmış bir işlem yok.")
     else:
-        st.write("🔄 Taranıyor...")
-        st.session_state.scan_start_time = time.time()
+        df_trades = pd.DataFrame(trade_history)
+        filter_strategy = st.radio("Filtre", options=["Tümü", "DCA", "SCALP"], horizontal=True, key="history_filter")
+        df_filtered = df_trades if filter_strategy == "Tümü" else df_trades[df_trades["strateji"] == filter_strategy]
 
-dca_fragment()
-scalp_fragment()
-with st.sidebar:
-    countdown_fragment()
+        if df_filtered.empty:
+            st.info("Bu filtreye uygun işlem yok.")
+        else:
+            total_trades = len(df_filtered)
+            winning = len(df_filtered[df_filtered["pnl_usd"] > 0])
+            losing = len(df_filtered[df_filtered["pnl_usd"] <= 0])
+            win_rate = (winning / total_trades * 100) if total_trades > 0 else 0.0
+            total_pnl = df_filtered["pnl_usd"].sum()
+            avg_pct = df_filtered["pnl_pct"].mean()
 
-st.markdown("---")
-st.header("📊 İşlem Geçmişi ve Performans")
-trade_history = st.session_state.get(f"{base_prefix}trade_history", [])
+            h1, h2, h3, h4 = st.columns(4)
+            h1.metric("Toplam İşlem", total_trades)
+            h2.metric("Kazanma Oranı", f"%{win_rate:.1f}", f"{winning}K / {losing}Z")
+            h3.metric("Toplam K/Z", f"${total_pnl:+,.4f}", f"Ort. %{avg_pct:+.3f}")
+            h4.metric("En İyi / Kötü", f"${df_filtered['pnl_usd'].max():+,.4f}", f"${df_filtered['pnl_usd'].min():+,.4f}")
 
-if not trade_history:
-    st.info("Henüz kapanmış bir işlem yok. İlk kar-al, stop-loss veya manuel kapatma burada görünecek.")
-else:
-    df_trades = pd.DataFrame(trade_history)
-    total_trades = len(df_trades)
-    winning_trades = len(df_trades[df_trades["pnl_usd"] > 0])
-    losing_trades = len(df_trades[df_trades["pnl_usd"] <= 0])
-    win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
-    total_pnl_usd = df_trades["pnl_usd"].sum()
-    avg_pnl_pct = df_trades["pnl_pct"].mean()
-    best_trade = df_trades["pnl_usd"].max()
-    worst_trade = df_trades["pnl_usd"].min()
+            df_display = df_filtered.copy()
+            df_display["zaman"] = pd.to_datetime(df_display["zaman"])
+            df_display = df_display.sort_values("zaman", ascending=False)
+            df_display["zaman"] = df_display["zaman"].dt.strftime("%d.%m %H:%M:%S")
+            df_display = df_display.rename(columns={
+                "zaman": "Zaman", "strateji": "Strateji", "yon": "Yön", "sebep": "Sebep",
+                "giris_fiyati": "Giriş", "cikis_fiyati": "Çıkış",
+                "miktar": "Miktar (BTC)", "pnl_usd": "K/Z (USDT)", "pnl_pct": "K/Z (%)", "mod": "Mod"
+            })
+            st.dataframe(df_display, use_container_width=True, hide_index=True, height=380)
 
-    col_p1, col_p2, col_p3, col_p4 = st.columns(4)
-    col_p1.metric("Toplam İşlem", f"{total_trades}")
-    col_p2.metric("Kazanma Oranı", f"%{win_rate:.1f}", f"{winning_trades}K / {losing_trades}Z")
-    col_p3.metric("Toplam K/Z", f"${total_pnl_usd:+,.4f}", f"Ort. %{avg_pnl_pct:+.3f}")
-    col_p4.metric("En İyi / En Kötü", f"${best_trade:+,.4f}", f"${worst_trade:+,.4f}")
-
-    st.markdown("##### Son İşlemler")
-    df_display = df_trades.copy()
-    df_display["zaman"] = pd.to_datetime(df_display["zaman"])
-    df_display = df_display.sort_values("zaman", ascending=False)
-    df_display["zaman"] = df_display["zaman"].dt.strftime("%d.%m %H:%M:%S")
-    df_display = df_display.rename(columns={
-        "zaman": "Zaman", "strateji": "Strateji", "yon": "Yön", "sebep": "Sebep",
-        "giris_fiyati": "Giriş Fiyatı", "cikis_fiyati": "Çıkış Fiyatı",
-        "miktar": "Miktar (BTC)", "pnl_usd": "K/Z (USDT)", "pnl_pct": "K/Z (%)", "mod": "Mod"
-    })
-    st.dataframe(df_display, use_container_width=True, hide_index=True)
-
-    csv_data = df_trades.to_csv(index=False).encode("utf-8")
-    col_dl, col_clr = st.columns(2)
-    col_dl.download_button("⬇️ İşlem Geçmişini CSV Olarak İndir", data=csv_data, file_name="kyoun_islem_gecmisi.csv", mime="text/csv", use_container_width=True)
-
-    with col_clr.popover("🗑️ İşlem Geçmişini Sil", use_container_width=True, disabled=not is_admin):
-        st.warning("Bu işlem geri alınamaz. Tüm işlem geçmişi (CSV'ye indirmediyseniz dahi) kalıcı olarak silinecek.")
-        if st.checkbox("Onaylıyorum, geçmişi tamamen sil", key="confirm_clear_history"):
-            if st.button("Evet, Şimdi Sil", key="clear_history_btn", type="primary", use_container_width=True):
-                st.session_state[f"{base_prefix}trade_history"] = []
-                save_state_to_db()
-                st.rerun()
+            csv_data = df_trades.to_csv(index=False).encode("utf-8")
+            col_dl, col_clr = st.columns(2)
+            col_dl.download_button("⬇️ CSV İndir", data=csv_data, file_name="kyoun_islem_gecmisi.csv", mime="text/csv", use_container_width=True)
+            with col_clr.popover("🗑️ Geçmişi Sil", use_container_width=True, disabled=not is_admin):
+                st.warning("Bu işlem geri alınamaz.")
+                if st.checkbox("Onaylıyorum, geçmişi tamamen sil", key="confirm_clear_history"):
+                    if st.button("Evet, Şimdi Sil", key="clear_history_btn", type="primary", use_container_width=True):
+                        st.session_state[f"{base_prefix}trade_history"] = []
+                        save_state_to_db()
+                        st.rerun()
