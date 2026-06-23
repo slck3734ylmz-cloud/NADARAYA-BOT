@@ -755,8 +755,10 @@ st.sidebar.subheader("🎯 Strateji Modu")
 dca_has_position = sum(st.session_state[f"{dca_prefix}l_status"]) > 0 or sum(st.session_state[f"{dca_prefix}s_status"]) > 0
 scalp_has_position = sum(st.session_state[f"{scalp_prefix}l_status"]) > 0 or sum(st.session_state[f"{scalp_prefix}s_status"]) > 0
 
+if not is_admin:
+    st.sidebar.caption("🔒 Strateji modu sadece yönetici tarafından değiştirilebilir.")
 selected_mode_radio = st.sidebar.radio("Aktif Strateji", options=["📊 DCA (Kademeli)", "⚡ Scalp (Kademeli, Hızlı)"],
-                                        index=0, key="strategy_mode_radio", label_visibility="collapsed")
+                                        index=0, key="strategy_mode_radio", label_visibility="collapsed", disabled=not is_admin)
 selected_mode = "DCA" if selected_mode_radio.startswith("📊") else "SCALP"
 
 if dca_has_position and selected_mode == "SCALP":
@@ -1063,4 +1065,13 @@ else:
     st.dataframe(df_display, use_container_width=True, hide_index=True)
 
     csv_data = df_trades.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ İşlem Geçmişini CSV Olarak İndir", data=csv_data, file_name=f"kyoun_islem_gecmisi.csv", mime="text/csv")
+    col_dl, col_clr = st.columns(2)
+    col_dl.download_button("⬇️ İşlem Geçmişini CSV Olarak İndir", data=csv_data, file_name="kyoun_islem_gecmisi.csv", mime="text/csv", use_container_width=True)
+
+    with col_clr.popover("🗑️ İşlem Geçmişini Sil", use_container_width=True, disabled=not is_admin):
+        st.warning("Bu işlem geri alınamaz. Tüm işlem geçmişi (CSV'ye indirmediyseniz dahi) kalıcı olarak silinecek.")
+        if st.checkbox("Onaylıyorum, geçmişi tamamen sil", key="confirm_clear_history"):
+            if st.button("Evet, Şimdi Sil", key="clear_history_btn", type="primary", use_container_width=True):
+                st.session_state[f"{base_prefix}trade_history"] = []
+                save_state_to_db()
+                st.rerun()
