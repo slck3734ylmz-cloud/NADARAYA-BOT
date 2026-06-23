@@ -206,12 +206,29 @@ def calculate_nw_bands(df, std_multiplier, col_suffix, h=8, std_window=20):
     df[f"NW_Alt{col_suffix}"] = df["NW_Merkez"] - (std_multiplier * df["Sapma_Std"])
     return df
 
+def fetch_with_retry(fetch_fn, max_retries=2, base_delay=0.5):
+    """
+    MEXC API çağrılarını geçici hatalara (ağ kesintisi, 429 rate limit, MEXC'in
+    kendi 5XX sunucu hataları) karşı dayanıklı hale getirir. Bu, "arada server
+    hatası veriyor" şikayetinin ana çözümüdür - tek seferlik geçici bir hata artık
+    fragment'i tamamen başarısız kılmıyor, kısa bir bekleme ile otomatik tekrar dener.
+    """
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            return fetch_fn()
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries:
+                time.sleep(base_delay * (attempt + 1))
+    raise last_error
+
 def fetch_tf_data(symbol, tf):
     """Bir zaman dilimi için OHLCV çekip NW/RSI/ATR'yi hesaplar. Tüm zaman
     dilimi bazlı işlemler bu tek fonksiyondan geçer - DCA ve Scalp aynı veriyi
     aynı şekilde hesaplar, kod tekrarı ve tutarsızlık riski ortadan kalkar."""
     p = TF_PARAMS[tf]
-    raw = exchange.fetch_ohlcv(symbol, tf, limit=p["limit"])
+    raw = fetch_with_retry(lambda: exchange.fetch_ohlcv(symbol, tf, limit=p["limit"]))
     df = pd.DataFrame(raw, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
     df["Zaman"] = pd.to_datetime(df["Zaman"], unit="ms")
     df = calculate_nw_bands(df, 3.0, f"_{tf}", h=p["h"], std_window=p["std_window"])
@@ -222,7 +239,7 @@ def fetch_tf_data(symbol, tf):
 @st.cache_data(ttl=300)
 def get_btc_funding_rate():
     try:
-        fr_data = exchange.fetch_funding_rate("BTC/USDT:USDT")
+        fr_data = fetch_with_retry(lambda: exchange.fetch_funding_rate("BTC/USDT:USDT"))
         return {
             "rate": fr_data.get("fundingRate"),
             "next_rate": fr_data.get("nextFundingRate"),
@@ -240,7 +257,7 @@ def estimate_liquidation_pools(symbol, is_volatile=False):
     modda 7 gün (kademe sisteminin volatil modda 1 güne kadar çıkmasıyla tutarlı)."""
     try:
         lookback_hours = 168 if is_volatile else 72
-        raw = exchange.fetch_ohlcv(symbol, "1h", limit=lookback_hours)
+        raw = fetch_with_retry(lambda: exchange.fetch_ohlcv(symbol, "1h", limit=lookback_hours))
         df = pd.DataFrame(raw, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         highs, lows, volumes = df["Yuksek"].values, df["Dusuk"].values, df["Hacim"].values
         current_p = df.iloc[-1]["Kapanis"]
@@ -392,6 +409,7 @@ def load_state(strategy_key):
 
     defaults = empty_position_state()
     loaded = False
+    db_error = None
     if supabase:
         try:
             q = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).order("id", descending=True).limit(1).execute()
@@ -414,8 +432,12 @@ def load_state(strategy_key):
                 st.session_state[f"{base_prefix}manual_lock_db"] = d.get("manual_lock", False)
                 st.session_state[f"{prefix}locked_prices"] = d.get(col("locked_prices"))
                 loaded = True
-        except Exception:
-            pass
+        except Exception as e:
+            # ÖNEMLİ: Hata artık sessizce yutulmuyor. Eğer Supabase'den veri
+            # çekilemezse (eksik kolon, bağlantı sorunu, yetki hatası vb.), bu
+            # durum kullanıcıya açıkça gösterilir - aksi halde "geçmiş sıfırlandı"
+            # sanılan durumun gerçek sebebi (DB hatası) hiç görülemezdi.
+            db_error = f"{type(e).__name__}: {str(e)[:200]}"
 
     for k, v in defaults.items():
         st.session_state[f"{prefix}{k}"] = v
@@ -424,6 +446,8 @@ def load_state(strategy_key):
         st.session_state.setdefault(f"{base_prefix}log_history", [])
         st.session_state.setdefault(f"{base_prefix}trade_history", [])
         st.session_state.setdefault(f"{base_prefix}manual_lock_db", False)
+        if db_error:
+            st.session_state[f"{base_prefix}db_load_error"] = db_error
     st.session_state.setdefault(f"{prefix}locked_prices", None)
     st.session_state[f"{prefix}loaded"] = True
     return prefix
@@ -526,10 +550,15 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
     if manual_lock:
         lock_key = f"{prefix}locked_prices"
         if st.session_state.get(lock_key) is None:
-            st.session_state[lock_key] = {"alt": nw_alt, "ust": nw_ust}
+            st.session_state[lock_key] = {"alt": nw_alt, "ust": nw_ust, "alt_ready": alt_ready, "ust_ready": ust_ready}
             save_state_to_db()
-        nw_alt = st.session_state[lock_key]["alt"]
-        nw_ust = st.session_state[lock_key]["ust"]
+        locked = st.session_state[lock_key]
+        nw_alt = locked["alt"]
+        nw_ust = locked["ust"]
+        # Eski kayıtlarda (yeni alanlar eklenmeden önce) alt_ready/ust_ready
+        # olmayabilir - geriye dönük uyumluluk için güvenli varsayılan kullanılır.
+        alt_ready = locked.get("alt_ready", alt_ready)
+        ust_ready = locked.get("ust_ready", ust_ready)
     else:
         st.session_state[f"{prefix}locked_prices"] = None
 
@@ -707,6 +736,10 @@ if st.sidebar.button("🚪 Çıkış Yap", key="logout_button_global", use_conta
     st.session_state.user_role = None
     st.rerun()
 
+db_load_error = st.session_state.get(f"{base_prefix}db_load_error")
+if db_load_error:
+    st.sidebar.error(f"⚠️ Veritabanından geçmiş veri yüklenemedi:\n{db_load_error}\n\nBu pencere boyunca geçici/sıfır state ile çalışılıyor.")
+
 st.sidebar.divider()
 st.sidebar.markdown("**⚙️ İşlem Modu**")
 api_keys_present = bool(MEXC_API_KEY and MEXC_API_SECRET)
@@ -791,6 +824,29 @@ top4.metric("⚡ Scalp Pozisyon", "Açık" if scalp_has_position else "Yok")
 top5.metric("🎯 Aktif Mod", selected_mode)
 st.divider()
 
+# ================= ORTAK LİKİDASYON HARİTASI (açılan pencere/popover) =================
+# Ana ekranı sade tutmak için ayrı bir popover'da gösterilir, hem DCA hem Scalp
+# panelinde aynı buton/pencere kullanılır - kod tekrarı ve görsel tutarsızlık olmaz.
+def render_liquidity_popover(is_volatile, key_ns):
+    days_label = "7" if is_volatile else "3"
+    with st.popover(f"🎯 Tahmini Likidasyon Haritası ({days_label} günlük)", use_container_width=True):
+        df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol, is_volatile)
+        st.caption("⚠️ Gerçek borsa verisi değildir. Yaygın kaldıraç seviyelerinin (10x/25x/50x/100x) çakıştığı olası yoğunlaşma noktalarının tahminidir.")
+        st.caption(f"Pencere: sakin piyasada 3 gün, volatil piyasada 7 gün (şu an: {days_label} gün)")
+        cliq1, cliq2 = st.columns(2)
+        with cliq1:
+            st.markdown("**🔴 LONG Havuzları**")
+            if not df_long_liq.empty:
+                st.dataframe(df_long_liq.reset_index(drop=True), hide_index=True, use_container_width=True, key=f"{key_ns}_liq_long_df")
+            else:
+                st.caption("Veri yok.")
+        with cliq2:
+            st.markdown("**🟢 SHORT Havuzları**")
+            if not df_short_liq.empty:
+                st.dataframe(df_short_liq.reset_index(drop=True), hide_index=True, use_container_width=True, key=f"{key_ns}_liq_short_df")
+            else:
+                st.caption("Veri yok.")
+
 # ================= ORTAK PANEL RENDER FONKSİYONU =================
 # DCA ve Scalp AYNI görsel yapıyı kullanır: Grafik -> Kademe Durumu -> Açık
 # Pozisyon Özeti -> (varsa) Manuel Kapat. Görsel tutarsızlık böylece imkansız hale gelir.
@@ -823,7 +879,7 @@ def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_k
                     st.success(f"✅ {labels[i]} — Alındı @ {st.session_state[f'{prefix}l_entry_prices'][i]:,.2f}")
                 elif not result["alt_ready"][i]:
                     needed = result["nw_alt"][i-1] - result["min_gaps_alt"][i]
-                    st.container(border=True).write(f"🔸 {labels[i]} — Bant: {result['nw_alt'][i]:,.2f} *(K{i}'den henüz yeterince ayrışmadı, en az {needed:,.2f} altına inmesi bekleniyor)*")
+                    st.container(border=True).write(f"🔸 {labels[i]} — Bant: {result['nw_alt'][i]:,.2f} *({labels[i-1]}'den henüz yeterince ayrışmadı, en az {needed:,.2f} altına inmesi bekleniyor)*")
                 else:
                     st.container(border=True).write(f"⏳ {labels[i]} — Bekliyor @ {result['nw_alt'][i]:,.2f}")
         with col_ks:
@@ -833,7 +889,7 @@ def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_k
                     st.success(f"✅ {labels[i]} — Açıldı @ {st.session_state[f'{prefix}s_entry_prices'][i]:,.2f}")
                 elif not result["ust_ready"][i]:
                     needed = result["nw_ust"][i-1] + result["min_gaps_ust"][i]
-                    st.container(border=True).write(f"🔸 {labels[i]} — Bant: {result['nw_ust'][i]:,.2f} *(K{i}'den henüz yeterince ayrışmadı, en az {needed:,.2f} üstüne çıkması bekleniyor)*")
+                    st.container(border=True).write(f"🔸 {labels[i]} — Bant: {result['nw_ust'][i]:,.2f} *({labels[i-1]}'den henüz yeterince ayrışmadı, en az {needed:,.2f} üstüne çıkması bekleniyor)*")
                 else:
                     st.container(border=True).write(f"⏳ {labels[i]} — Bekliyor @ {result['nw_ust'][i]:,.2f}")
 
@@ -853,7 +909,6 @@ def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_k
                     cL1, cL2 = st.columns(2)
                     cL1.metric("Maliyet Ort.", f"${l_avg:,.2f}")
                     cL2.metric("Miktar", f"{l_crypto:.6f} BTC")
-                    color = "normal" if pnl_usd >= 0 else "inverse"
                     st.metric("Anlık K/Z", f"${pnl_usd:+,.4f}", f"{pnl_pct:+.2f}%")
                     st.caption(f"🟢 Kar-Al: {l_avg + result['tp_distance']:,.2f}" + (f" · 🔴 Stop: {l_avg - result['sl_distance']:,.2f}" if l_status[2] else " · Stop: K3'te aktif olacak"))
                     if st.button("✋ LONG Kapat", key=f"{key_ns}_close_long", disabled=not is_admin, use_container_width=True):
@@ -889,7 +944,7 @@ def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_k
 @st.fragment(run_every="10s")
 def dca_fragment():
     try:
-        live_ticker = exchange.fetch_ticker(selected_symbol)
+        live_ticker = fetch_with_retry(lambda: exchange.fetch_ticker(selected_symbol))
         current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
         price_change_24h = live_ticker.get('percentage') or 0.0
 
@@ -900,7 +955,7 @@ def dca_fragment():
         df_4h = fetch_tf_data(selected_symbol, "4h")
         df_1d = fetch_tf_data(selected_symbol, "1d")
 
-        raw_4h_trend = exchange.fetch_ohlcv(selected_symbol, "4h", limit=250)
+        raw_4h_trend = fetch_with_retry(lambda: exchange.fetch_ohlcv(selected_symbol, "4h", limit=250))
         df_4h_trend = pd.DataFrame(raw_4h_trend, columns=["Zaman", "Acilis", "Yuksek", "Dusuk", "Kapanis", "Hacim"])
         df_4h_trend["EMA_200"] = df_4h_trend["Kapanis"].ewm(span=200, adjust=False).mean()
         trend_4h = "YUKARI (BOĞA)" if df_4h_trend.iloc[-1]["Kapanis"] > df_4h_trend.iloc[-1]["EMA_200"] else "AŞAĞI (AYI)"
@@ -937,22 +992,8 @@ def dca_fragment():
         info4.metric("Son Güncelleme", (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)).strftime('%H:%M:%S'))
         st.caption(f"Aktif Motor: {' / '.join(tf_keys)} hiyerarşisi · Kar-Al mesafe: {result['tp_distance']:.2f} · Stop-Loss mesafe: {result['sl_distance']:.2f}")
 
-        render_strategy_panel("DCA", dca_prefix, current_price, chart_dfs, ["1m", "5m", "15m", "1h", "4h", "1d"], ["K1", "K2", "K3"], result, live_trading_enabled, "dca")
-        # Aktif olan kademe etiketlerini ayrıca küçük bir notla göster (hangi TF kullanılıyor)
-        st.caption(f"Şu an aktif kademe zaman dilimleri: {labels[0]}, {labels[1]}, {labels[2]}")
-
-        with st.expander(f"🎯 Tahmini Likidasyon Haritası ({'7' if is_volatile else '3'} günlük)"):
-            df_long_liq, df_short_liq = estimate_liquidation_pools(selected_symbol, is_volatile)
-            st.caption("⚠️ Gerçek borsa verisi değildir, yaygın kaldıraç seviyelerine göre tahmindir.")
-            cliq1, cliq2 = st.columns(2)
-            with cliq1:
-                st.caption("🔴 LONG Havuzları")
-                if not df_long_liq.empty:
-                    st.table(df_long_liq.reset_index(drop=True))
-            with cliq2:
-                st.caption("🟢 SHORT Havuzları")
-                if not df_short_liq.empty:
-                    st.table(df_short_liq.reset_index(drop=True))
+        render_strategy_panel("DCA", dca_prefix, current_price, chart_dfs, ["1m", "5m", "15m", "1h", "4h", "1d"], labels, result, live_trading_enabled, "dca")
+        render_liquidity_popover(is_volatile, "dca")
 
     except Exception as e:
         st.error(f"DCA hatası, 10s sonra tekrar denenecek: {type(e).__name__}: {str(e)[:200]}")
@@ -971,7 +1012,7 @@ def dca_fragment():
 @st.fragment(run_every="10s")
 def scalp_fragment():
     try:
-        live_ticker = exchange.fetch_ticker(selected_symbol)
+        live_ticker = fetch_with_retry(lambda: exchange.fetch_ticker(selected_symbol))
         current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
         price_change_24h = live_ticker.get('percentage') or 0.0
 
@@ -991,6 +1032,7 @@ def scalp_fragment():
         st.caption("Her zaman 1m/5m/15m kullanır (piyasa durumundan bağımsız). DCA ile aynı kademe mantığı, ayrı/bağımsız pozisyon.")
 
         render_strategy_panel("SCALP", scalp_prefix, current_price, chart_dfs, ["1m", "5m", "15m"], labels, result, live_trading_enabled, "scalp")
+        render_liquidity_popover(False, "scalp")  # Scalp her zaman kısa vadeli - sabit 3 günlük pencere
 
     except Exception as e:
         st.error(f"Scalp hatası, 10s sonra tekrar denenecek: {type(e).__name__}: {str(e)[:200]}")
