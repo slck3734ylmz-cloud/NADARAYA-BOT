@@ -46,7 +46,6 @@ SHOCK_COOLDOWN_MINUTES = 30
 # MEXC Futures (Vadeli) bağlantısı. API key/secret st.secrets üzerinden okunur.
 MEXC_API_KEY = st.secrets.get("MEXC_API_KEY", "")
 MEXC_API_SECRET = st.secrets.get("MEXC_API_SECRET", "")
-VIEWER_PASSWORD = "dca2026"
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "")
 
 exchange = ccxt.mexc({
@@ -119,11 +118,7 @@ def check_password():
             user_password = st.text_input("Şifre", type="password", key="login_pass_key_global", label_visibility="collapsed", placeholder="Şifrenizi girin")
             submitted = st.form_submit_button("Giriş Yap", use_container_width=True)
             if submitted:
-                if user_password == VIEWER_PASSWORD:
-                    st.session_state.password_correct = True
-                    st.session_state.user_role = "viewer"
-                    st.rerun()
-                elif ADMIN_PASSWORD and user_password == ADMIN_PASSWORD:
+                if ADMIN_PASSWORD and user_password == ADMIN_PASSWORD:
                     st.session_state.password_correct = True
                     st.session_state.user_role = "admin"
                     st.rerun()
@@ -556,6 +551,29 @@ def release_entry_lock():
         pass
 
 
+def adjust_balance_atomic(delta):
+    """balance_usd'yi DB üzerinde ATOMİK olarak artırır/azaltır (PostgreSQL
+    RPC 'adjust_balance' fonksiyonu üzerinden). Bu, 'DB'den oku -> session_state'te
+    değiştir -> tamamını geri yaz' döngüsünün getirdiği yarış durumunu ortadan
+    kaldırır: birden fazla sekme/cihaz aynı anda işlem yapsa da, her biri kendi
+    deltasını ekler, kimse diğerinin güncellemesini ezmez. DB'den dönen GÜNCEL
+    balance, session_state'e de yazılır - böylece ekran her zaman doğru değeri
+    gösterir. Supabase yoksa veya RPC çağrısı başarısız olursa, eski (atomik
+    olmayan) yönteme düşülür - bot tamamen durmamalı."""
+    if supabase:
+        try:
+            resp = supabase.rpc("adjust_balance", {"p_coin_symbol": selected_symbol, "p_delta": delta}).execute()
+            if resp.data is not None:
+                new_balance = resp.data if isinstance(resp.data, (int, float)) else resp.data[0]
+                st.session_state[f"{base_prefix}balance_usd"] = new_balance
+                return new_balance
+        except Exception as e:
+            st.error(f"⚠️ Atomik bakiye güncellemesi başarısız, yedek yönteme geçildi: {type(e).__name__}: {str(e)[:150]}")
+    # Yedek (fallback): RPC yoksa/başarısız olursa session_state üzerinden ekle.
+    st.session_state[f"{base_prefix}balance_usd"] = st.session_state.get(f"{base_prefix}balance_usd", 100.0) + delta
+    return st.session_state[f"{base_prefix}balance_usd"]
+
+
 
 def record_trade(strategy_label, direction, exit_reason, entry_price, exit_price, amount, pnl_usd, pnl_pct, is_live):
     trade_record = {
@@ -658,7 +676,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
                     order_result = place_futures_order(selected_symbol, "sell", amt, is_live=is_live, reduce_only=True)
                     pnl_usd = (current_price - avg) * amt
                     pnl_pct = ((current_price / avg) - 1) * 100 if avg > 0 else 0.0
-                    st.session_state[f"{base_prefix}balance_usd"] += margin_used_total + pnl_usd
+                    adjust_balance_atomic(margin_used_total + pnl_usd)
                     mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
                     note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
                     emoji = "🔴" if exit_reason == "Stop-Loss" else "🟢"
@@ -807,8 +825,7 @@ is_admin = st.session_state.get("user_role") == "admin"
 
 # ================= SIDEBAR (sade, sadece ayarlar) =================
 st.sidebar.markdown("## 🐑 Kyoun")
-role_label = "👑 Yönetici" if is_admin else "👁️ İzleyici"
-st.sidebar.caption(f"BTC/USDT Futures · Giriş: {role_label}")
+st.sidebar.caption("BTC/USDT Futures · 👑 Yönetici")
 st.sidebar.caption("🔖 build: v2026-06-23-balance-rebuild")
 if st.sidebar.button("🚪 Çıkış Yap", key="logout_button_global", use_container_width=True):
     st.session_state.password_correct = False
@@ -822,13 +839,11 @@ if db_load_error:
 st.sidebar.divider()
 st.sidebar.markdown("**⚙️ İşlem Modu**")
 api_keys_present = bool(MEXC_API_KEY and MEXC_API_SECRET)
-if not is_admin:
-    st.sidebar.caption("👁️ İzleyici: Canlı Mod kilitli.")
-elif not api_keys_present:
+if not api_keys_present:
     st.sidebar.caption("⚠️ API anahtarı yok: Sadece Kağıt Mod.")
 trading_mode = st.sidebar.radio("Mod", options=["📝 Kağıt Mod", "🔴 Canlı Mod"], index=0,
-                                  key="trading_mode_radio", disabled=not (is_admin and api_keys_present), label_visibility="collapsed")
-live_trading_enabled = trading_mode.startswith("🔴") and api_keys_present and is_admin
+                                  key="trading_mode_radio", disabled=not api_keys_present, label_visibility="collapsed")
+live_trading_enabled = trading_mode.startswith("🔴") and api_keys_present
 if live_trading_enabled:
     st.sidebar.error("🔴 CANLI — gerçek emir gönderilecek!")
     if not st.sidebar.checkbox("Riskleri anladım, onaylıyorum", key="live_trading_confirm_checkbox"):
