@@ -412,7 +412,7 @@ def load_state(strategy_key):
                 st.session_state[f"{base_prefix}log_history"] = d.get("log_history") or []
                 st.session_state[f"{base_prefix}trade_history"] = d.get("trade_history") or []
                 st.session_state[f"{base_prefix}manual_lock_db"] = d.get("manual_lock", False)
-                st.session_state[f"{base_prefix}locked_prices"] = d.get("locked_prices")
+                st.session_state[f"{prefix}locked_prices"] = d.get(col("locked_prices"))
                 loaded = True
         except Exception:
             pass
@@ -424,7 +424,7 @@ def load_state(strategy_key):
         st.session_state.setdefault(f"{base_prefix}log_history", [])
         st.session_state.setdefault(f"{base_prefix}trade_history", [])
         st.session_state.setdefault(f"{base_prefix}manual_lock_db", False)
-        st.session_state.setdefault(f"{base_prefix}locked_prices", None)
+    st.session_state.setdefault(f"{prefix}locked_prices", None)
     st.session_state[f"{prefix}loaded"] = True
     return prefix
 
@@ -436,8 +436,7 @@ def save_state_to_db():
                 "balance_usd": st.session_state.get(f"{base_prefix}balance_usd", 100.0),
                 "log_history": st.session_state.get(f"{base_prefix}log_history", []),
                 "trade_history": st.session_state.get(f"{base_prefix}trade_history", []),
-                "manual_lock": st.session_state.get("live_manual_lock_toggle", False),
-                "locked_prices": st.session_state.get(f"{base_prefix}locked_prices")}
+                "manual_lock": st.session_state.get("live_manual_lock_toggle", False)}
         for strategy_key in ("dca", "scalp"):
             prefix = f"{base_prefix}{strategy_key}_"
             col = lambda name: f"{strategy_key}_{name}"
@@ -448,6 +447,7 @@ def save_state_to_db():
             data[col("s_crypto")] = st_data.get(f"{prefix}s_crypto", 0.0)
             data[col("s_usd_spent")] = st_data.get(f"{prefix}s_usd_spent", 0.0)
             data[col("s_avg_price")] = st_data.get(f"{prefix}s_avg_price", 0.0)
+            data[col("locked_prices")] = st_data.get(f"{prefix}locked_prices")
             l_status = st_data.get(f"{prefix}l_status", [False, False, False])
             s_status = st_data.get(f"{prefix}s_status", [False, False, False])
             l_entries = st_data.get(f"{prefix}l_entry_prices", [0.0, 0.0, 0.0])
@@ -498,18 +498,22 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
     MIN_STAGE_GAP_ATR_MULT = 0.5
     alt_base = [raw_alt[0]]
     alt_ready = [True]
+    min_gaps_alt = [0.0]
     for i in range(1, 3):
         min_gap = MIN_STAGE_GAP_ATR_MULT * atr_vals[i]
         gap = alt_base[-1] - raw_alt[i]
         alt_base.append(raw_alt[i])
         alt_ready.append(gap >= min_gap)
+        min_gaps_alt.append(min_gap)
     ust_base = [raw_ust[0]]
     ust_ready = [True]
+    min_gaps_ust = [0.0]
     for i in range(1, 3):
         min_gap = MIN_STAGE_GAP_ATR_MULT * atr_vals[i]
         gap = raw_ust[i] - ust_base[-1]
         ust_base.append(raw_ust[i])
         ust_ready.append(gap >= min_gap)
+        min_gaps_ust.append(min_gap)
 
     l_status = st.session_state[f"{prefix}l_status"]
     s_status = st.session_state[f"{prefix}s_status"]
@@ -656,7 +660,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
     return {
         "nw_alt": nw_alt, "nw_ust": nw_ust, "rsi_vals": rsi_vals, "rsi_prev_vals": rsi_prev_vals,
         "tf_names": tf_names, "tp_distance": tp_distance, "sl_distance": sl_distance, "atr_k3": atr_k3,
-        "alt_ready": alt_ready, "ust_ready": ust_ready,
+        "alt_ready": alt_ready, "ust_ready": ust_ready, "min_gaps_alt": min_gaps_alt, "min_gaps_ust": min_gaps_ust,
     }
 
 def close_position_manual(strategy_label, prefix, direction, current_price, is_live):
@@ -818,7 +822,8 @@ def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_k
                 if l_status[i]:
                     st.success(f"✅ {labels[i]} — Alındı @ {st.session_state[f'{prefix}l_entry_prices'][i]:,.2f}")
                 elif not result["alt_ready"][i]:
-                    st.container(border=True).write(f"🔸 {labels[i]} — Bekliyor @ {result['nw_alt'][i]:,.2f} *(bant henüz ayrışmadı)*")
+                    needed = result["nw_alt"][i-1] - result["min_gaps_alt"][i]
+                    st.container(border=True).write(f"🔸 {labels[i]} — Bant: {result['nw_alt'][i]:,.2f} *(K{i}'den henüz yeterince ayrışmadı, en az {needed:,.2f} altına inmesi bekleniyor)*")
                 else:
                     st.container(border=True).write(f"⏳ {labels[i]} — Bekliyor @ {result['nw_alt'][i]:,.2f}")
         with col_ks:
@@ -827,7 +832,8 @@ def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_k
                 if s_status[i]:
                     st.success(f"✅ {labels[i]} — Açıldı @ {st.session_state[f'{prefix}s_entry_prices'][i]:,.2f}")
                 elif not result["ust_ready"][i]:
-                    st.container(border=True).write(f"🔸 {labels[i]} — Bekliyor @ {result['nw_ust'][i]:,.2f} *(bant henüz ayrışmadı)*")
+                    needed = result["nw_ust"][i-1] + result["min_gaps_ust"][i]
+                    st.container(border=True).write(f"🔸 {labels[i]} — Bant: {result['nw_ust'][i]:,.2f} *(K{i}'den henüz yeterince ayrışmadı, en az {needed:,.2f} üstüne çıkması bekleniyor)*")
                 else:
                     st.container(border=True).write(f"⏳ {labels[i]} — Bekliyor @ {result['nw_ust'][i]:,.2f}")
 
@@ -975,7 +981,7 @@ def scalp_fragment():
         dfs_by_tf = {"1m": df_1m, "5m": df_5m, "15m": df_15m}
         labels = ["K1 (1m)", "K2 (5m)", "K3 (15m)"]
 
-        result = run_staged_strategy("scalp", "SCALP", scalp_prefix, current_price, dfs_by_tf, SCALP_AMOUNTS, live_trading_enabled, allow_new_entries=(selected_mode == "SCALP"))
+        result = run_staged_strategy("scalp", "SCALP", scalp_prefix, current_price, dfs_by_tf, SCALP_AMOUNTS, live_trading_enabled, manual_lock, allow_new_entries=(selected_mode == "SCALP"))
         chart_dfs = {"1m": df_1m, "5m": df_5m, "15m": df_15m}
 
         info1, info2, info3 = st.columns(3)
