@@ -26,14 +26,21 @@ ATR_TP_MULT, ATR_SL_MULT = 1.0, 1.5
 # ANİ HAREKET KORUMASI: Flash-crash/flash-pump anlarında NW bandına "ucuz/pahalı"
 # diye yanlış zamanda giriş yapılmasını önlemek için, birden fazla zaman
 # penceresinde fiyatın ne kadar hareket ettiği kontrol edilir. Pencerelerden
-# HERHANGİ BİRİ eşiği aşarsa yeni giriş durur (TP/SL'e dokunulmaz, sadece yeni
-# pozisyon açılmaz). Tek bir sabit yüzde eşiği kullanılır, basit ve anlaşılır.
-SHOCK_THRESHOLD_PCT = 3.0   # Bu yüzdeyi aşan hareket "ani" sayılır
+# HERHANGİ BİRİ kendi eşiğini aşarsa yeni giriş durur (TP/SL'e dokunulmaz,
+# sadece yeni pozisyon açılmaz). Her pencerenin kendi eşiği var - kısa pencere
+# (1dk) küçük bir sıçramada bile tetiklensin diye düşük, uzun pencere (15dk)
+# normal dalgalanmaları şok saymasın diye daha yüksek tutuluyor.
 SHOCK_WINDOWS = {
-    "1dk":  1,   # df_1m üzerinde 1 bar geriye (son 1 dakika)
-    "5dk":  5,   # df_1m üzerinde 5 bar geriye (son 5 dakika)
-    "15dk": 1,   # df_15m üzerinde 1 bar geriye (son 15 dakika)
+    "1dk":  {"bars_back": 1, "threshold_pct": 1.5},   # df_1m üzerinde 1 bar geriye (son 1 dakika)
+    "5dk":  {"bars_back": 5, "threshold_pct": 2.5},   # df_1m üzerinde 5 bar geriye (son 5 dakika)
+    "15dk": {"bars_back": 1, "threshold_pct": 4.0},   # df_15m üzerinde 1 bar geriye (son 15 dakika)
 }
+
+# SOĞUMA SÜRESİ: Şok bittiği anda (eşiklerin hepsi altına düştüğünde) hemen
+# yeni girişe izin vermek yerine, piyasanın gerçekten sakinleştiğinden emin
+# olmak için bir bekleme süresi uygulanır. Şok durumu true olduğu her an bu
+# süre sıfırlanır (yeniden başlar); şok false olur olmaz geri sayım başlar.
+SHOCK_COOLDOWN_MINUTES = 30
 
 # MEXC Futures (Vadeli) bağlantısı. API key/secret st.secrets üzerinden okunur.
 MEXC_API_KEY = st.secrets.get("MEXC_API_KEY", "")
@@ -292,19 +299,20 @@ def estimate_liquidation_pools(symbol, is_volatile=False):
 
 def detect_price_shock(df_1m, df_15m, current_price):
     """ANİ HAREKET TESPİTİ: Birden fazla zaman penceresinde (1dk/5dk/15dk)
-    fiyatın şu anki seviyeden ne kadar uzaklaştığını ölçer. Pencerelerden
-    HERHANGİ BİRİ SHOCK_THRESHOLD_PCT'yi aşarsa "şok" durumu tetiklenir.
-    Basit ve anlaşılır kalması için tek sabit yüzde eşiği kullanılır,
-    kademeli/karmaşık bir sistem değildir.
+    fiyatın şu anki seviyeden ne kadar uzaklaştığını ölçer. Her pencerenin
+    kendi eşiği vardır (SHOCK_WINDOWS içinde tanımlı); pencerelerden
+    HERHANGİ BİRİ kendi eşiğini aşarsa "şok" durumu tetiklenir.
 
     Döner: (is_shock: bool, detail: dict) - detail her pencerenin yüzde
-    değişimini ve eşik aşılıp aşılmadığını içerir, arayüzde/Telegram'da
-    gösterilebilir.
+    değişimini, eşik değerini ve eşik aşılıp aşılmadığını içerir,
+    arayüzde/Telegram'da gösterilebilir.
     """
     detail = {}
     is_shock = False
     try:
-        for window_label, bars_back in SHOCK_WINDOWS.items():
+        for window_label, cfg in SHOCK_WINDOWS.items():
+            bars_back = cfg["bars_back"]
+            threshold_pct = cfg["threshold_pct"]
             src_df = df_15m if window_label == "15dk" else df_1m
             if len(src_df) <= bars_back:
                 continue
@@ -312,8 +320,8 @@ def detect_price_shock(df_1m, df_15m, current_price):
             if ref_price <= 0:
                 continue
             change_pct = ((current_price / ref_price) - 1) * 100
-            exceeded = abs(change_pct) >= SHOCK_THRESHOLD_PCT
-            detail[window_label] = {"change_pct": change_pct, "exceeded": exceeded}
+            exceeded = abs(change_pct) >= threshold_pct
+            detail[window_label] = {"change_pct": change_pct, "threshold_pct": threshold_pct, "exceeded": exceeded}
             if exceeded:
                 is_shock = True
     except Exception:
@@ -754,6 +762,22 @@ else:
     st.sidebar.caption("📝 Sinyaller simüle ediliyor, gerçek emir yok.")
 
 st.sidebar.divider()
+st.sidebar.markdown("**🚨 Ani Hareket Koruması**")
+shock_protection_enabled = st.sidebar.toggle(
+    "Şok koruması + soğuma süresi aktif",
+    value=st.session_state.get("shock_protection_enabled", True),
+    key="shock_protection_enabled",
+    disabled=not is_admin,
+    help="Kapatırsan ani hareket tespiti ve soğuma süresi devre dışı kalır, "
+         "bot her durumda normal giriş mantığıyla çalışır. Mevcut soğuma "
+         "geri sayımı da bu süre boyunca duraklar."
+)
+if not shock_protection_enabled:
+    st.sidebar.caption("⚠️ Koruma KAPALI: ani hareketlerde de yeni giriş yapılabilir.")
+else:
+    st.sidebar.caption(f"🛡️ Koruma aktif · soğuma: {SHOCK_COOLDOWN_MINUTES} dk")
+
+st.sidebar.divider()
 col_b1, col_b2 = st.sidebar.columns(2)
 if col_b1.button("🔔 Test", key="telegram_test_btn", use_container_width=True, disabled=not is_admin):
     send_telegram_msg("👋 *Bağlantı Testi:* Başarılı!")
@@ -1028,18 +1052,44 @@ def scalp_fragment():
         dfs_by_tf = {"1m": df_1m, "5m": df_5m, "15m": df_15m}
         labels = ["K1 (1m)", "K2 (5m)", "K3 (15m)"]
 
-        is_shock, shock_detail = detect_price_shock(df_1m, df_15m, current_price)
+        if shock_protection_enabled:
+            is_shock, shock_detail = detect_price_shock(df_1m, df_15m, current_price)
+        else:
+            is_shock, shock_detail = False, {}
 
-        result = run_staged_strategy("scalp", "SCALP", scalp_prefix, current_price, dfs_by_tf, SCALP_AMOUNTS, live_trading_enabled, allow_new_entries=not is_shock)
+        # SOĞUMA SÜRESİ: is_shock=True olduğu her an "son şok zamanı" güncellenir
+        # (yeniden başlar). Yeni girişe izin, sadece son şoktan beri en az
+        # SHOCK_COOLDOWN_MINUTES geçtiyse verilir - şok bitti gibi görünse bile
+        # piyasa hâlâ dalgalıysa (tekrar eşik aşılırsa) sayaç sıfırlanır.
+        # Koruma kapatılmışken bu blok hiç çalışmaz, geri sayım da duraklar -
+        # tekrar açıldığında kalan süreden devam eder.
+        now_ts = time.time()
+        last_shock_ts_key = f"{base_prefix}shock_last_ts"
+        if shock_protection_enabled:
+            if is_shock:
+                st.session_state[last_shock_ts_key] = now_ts
+            last_shock_ts = st.session_state.get(last_shock_ts_key, 0)
+            cooldown_remaining_sec = max(0.0, (SHOCK_COOLDOWN_MINUTES * 60) - (now_ts - last_shock_ts)) if last_shock_ts else 0.0
+            in_cooldown = cooldown_remaining_sec > 0
+            block_new_entries = is_shock or in_cooldown
+        else:
+            cooldown_remaining_sec = 0.0
+            in_cooldown = False
+            block_new_entries = False
+
+        result = run_staged_strategy("scalp", "SCALP", scalp_prefix, current_price, dfs_by_tf, SCALP_AMOUNTS, live_trading_enabled, allow_new_entries=not block_new_entries)
         chart_dfs = {"1m": df_1m, "5m": df_5m, "15m": df_15m}
 
         if is_shock:
-            shock_parts = [f"{k}: {v['change_pct']:+.2f}%" for k, v in shock_detail.items()]
-            st.error(f"🚨 ANİ HAREKET TESPİT EDİLDİ ({' · '.join(shock_parts)}) — eşik %{SHOCK_THRESHOLD_PCT:.0f}. Yeni giriş geçici olarak durduruldu, açık pozisyonların TP/SL'i normal çalışıyor.")
+            shock_parts = [f"{k}: {v['change_pct']:+.2f}% (eşik %{v['threshold_pct']:.1f})" for k, v in shock_detail.items() if v["exceeded"]]
+            st.error(f"🚨 ANİ HAREKET TESPİT EDİLDİ ({' · '.join(shock_parts)}). Yeni giriş durduruldu, açık pozisyonların TP/SL'i normal çalışıyor. Sakinleştikten sonra {SHOCK_COOLDOWN_MINUTES} dk soğuma süresi uygulanacak.")
             last_shock_warn = st.session_state.get(f"{base_prefix}shock_last_warn", 0)
-            if time.time() - last_shock_warn > 300:
-                send_telegram_msg(f"🚨 *ANİ HAREKET* ({coin_title})\n{' · '.join(shock_parts)}\nEşik: %{SHOCK_THRESHOLD_PCT:.0f}\nYeni giriş durduruldu, mevcut pozisyon TP/SL normal çalışıyor.")
-                st.session_state[f"{base_prefix}shock_last_warn"] = time.time()
+            if now_ts - last_shock_warn > 300:
+                send_telegram_msg(f"🚨 *ANİ HAREKET* ({coin_title})\n{' · '.join(shock_parts)}\nYeni giriş durduruldu, mevcut pozisyon TP/SL normal çalışıyor.\nSoğuma süresi: {SHOCK_COOLDOWN_MINUTES} dk.")
+                st.session_state[f"{base_prefix}shock_last_warn"] = now_ts
+        elif in_cooldown:
+            cooldown_min_left = cooldown_remaining_sec / 60
+            st.warning(f"🧊 SOĞUMA SÜRESİ: Ani hareket geçti ama piyasanın gerçekten sakinleştiğinden emin olmak için yeni giriş {cooldown_min_left:.1f} dk daha durdurulacak. Açık pozisyonların TP/SL'i normal çalışıyor.")
 
         info1, info2, info3 = st.columns(3)
         info1.metric("Anlık Fiyat", f"${current_price:,.2f}", f"{price_change_24h:+.2f}%")
