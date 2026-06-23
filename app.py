@@ -135,6 +135,35 @@ st.markdown(
         display: none !important;
         visibility: hidden !important;
     }
+    /* Streamlit'in kendi platform arayüzü (üst Fork/GitHub/Share/Deploy çubuğu,
+       hamburger menü, sağ üst köşedeki header ve sağ alttaki "Hosted with
+       Streamlit" rozeti) ekranımızdaki yazıların üzerine biniyordu - tamamen
+       kaldırılıyor ki kendi içeriğimiz tam görünür kalsın. Birden fazla
+       data-testid/class adı veriliyor çünkü Streamlit sürümden sürüme bu
+       isimleri değiştiriyor (örn. v1.38'de stDeployButton -> stAppDeployButton).
+       stHeader'ı display:none yapmıyoruz (bazı sürümlerde sidebar açma/kapama
+       oku header içinde olabilir) - bunun yerine şeffaf ve yüksekliksiz
+       yapıyoruz, sadece görsel olarak kayboluyor ama olası gömülü kontroller
+       hâlâ tıklanabilir kalıyor. */
+    [data-testid="stHeader"] {
+        background: transparent !important;
+        height: 0 !important;
+        min-height: 0 !important;
+    }
+    [data-testid="stToolbar"],
+    [data-testid="stToolbarActions"],
+    [data-testid="stDecoration"],
+    [data-testid="stAppDeployButton"],
+    .stAppDeployButton,
+    .stDeployButton,
+    #MainMenu,
+    footer,
+    .viewerBadge_container__1QSob,
+    .viewerBadge_link__1S137 {
+        display: none !important;
+        visibility: hidden !important;
+        height: 0 !important;
+    }
     section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
         gap: 0.3rem !important;
     }
@@ -739,8 +768,8 @@ st.markdown(
     .kyoun-topbar { display:flex; gap:0; padding:0; margin-bottom:0.6rem; }
     div[data-testid="stMetric"] { background:#161B22; border:1px solid #2A2E37; border-radius:10px; padding:10px 14px; }
     div[data-testid="stMetricLabel"] { font-size:0.78rem; }
-    /* Sidebar ile ana içerik arası boşluğu sıkılaştır */
-    [data-testid="stMainBlockContainer"] { padding-top: 1.2rem !important; }
+    /* Header artık 0 yükseklikte olduğu için üst boşluğu sıkılaştır */
+    [data-testid="stMainBlockContainer"] { padding-top: 0.8rem !important; }
     section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] { gap: 0.4rem; }
     /* Kademe durumu kutularındaki uzun metinlerin taşmasını önle, satır aralığını düzelt */
     div[data-testid="stVerticalBlockBorderWrapper"] p { line-height: 1.45 !important; }
