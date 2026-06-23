@@ -143,36 +143,6 @@ st.markdown(
         opacity: 1.0 !important;
         transition: none !important;
     }
-    div[data-testid="stStatusWidget"], [data-testid="stStatusWidget"] {
-        display: none !important;
-        visibility: hidden !important;
-    }
-    /* Streamlit'in kendi platform arayüzü (üst Fork/GitHub/Share/Deploy çubuğu,
-       hamburger menü ve sağ alttaki "Hosted with Streamlit" rozeti)
-       ekranımızdaki yazıların üzerine biniyordu. Header'ın KENDİSİNİ
-       (display:none veya height:0) hiç değiştirmiyoruz - sidebar açma/kapama
-       oku o elementin içinde duruyor, header'ı sıfırlamak o oku da yok
-       ediyordu. Bunun yerine SADECE header'ın içindeki toolbar/deploy
-       butonunu hedefliyoruz, header'ın kendisi ve sidebar kontrolü olduğu
-       gibi kalıyor. Birden fazla data-testid/class adı veriliyor çünkü
-       Streamlit sürümden sürüme bu isimleri değiştiriyor. */
-    [data-testid="stHeader"] {
-        background: transparent !important;
-    }
-    [data-testid="stToolbar"],
-    [data-testid="stToolbarActions"],
-    [data-testid="stDecoration"],
-    [data-testid="stAppDeployButton"],
-    .stAppDeployButton,
-    .stDeployButton,
-    #MainMenu,
-    footer,
-    .viewerBadge_container__1QSob,
-    .viewerBadge_link__1S137 {
-        display: none !important;
-        visibility: hidden !important;
-        height: 0 !important;
-    }
     section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
         gap: 0.3rem !important;
     }
