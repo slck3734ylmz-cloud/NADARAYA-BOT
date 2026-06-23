@@ -756,6 +756,7 @@ is_admin = st.session_state.get("user_role") == "admin"
 st.sidebar.markdown("## 🐑 Kyoun")
 role_label = "👑 Yönetici" if is_admin else "👁️ İzleyici"
 st.sidebar.caption(f"BTC/USDT Futures · Giriş: {role_label}")
+st.sidebar.caption("🔖 build: v2026-06-23-scalp-only")
 if st.sidebar.button("🚪 Çıkış Yap", key="logout_button_global", use_container_width=True):
     st.session_state.password_correct = False
     st.session_state.user_role = None
