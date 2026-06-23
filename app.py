@@ -1057,6 +1057,10 @@ def scalp_fragment():
         # ANİ HAREKET TESPİTİ: Sidebar'daki anahtarın durumuna bakılmaksızın
         # sistem fiyatı HER ZAMAN izler. Anahtar sadece "koruma şu an aktif mi"
         # bilgisini gösterir/manuel kapatmaya izin verir - tespiti durdurmaz.
+        # NOT: Dıştaki (sidebar) shock_protection_enabled adını burada KASTEN
+        # kullanmıyoruz - fonksiyon içinde aynı ada atama yapmak Python'da onu
+        # local değişkene çevirir ve UnboundLocalError'a yol açar. Bunun
+        # yerine her okuma/yazma doğrudan st.session_state üzerinden yapılır.
         is_shock, shock_detail = detect_price_shock(df_1m, df_15m, current_price)
 
         # OTOMATİK AÇMA: Şok tespit edildiği anda anahtar kendisi True'ya
@@ -1069,41 +1073,42 @@ def scalp_fragment():
             st.session_state[last_shock_ts_key] = now_ts
             if not st.session_state.get("shock_protection_enabled", False):
                 st.session_state["shock_protection_enabled"] = True
-                shock_protection_enabled = True
                 st.rerun()
 
         last_shock_ts = st.session_state.get(last_shock_ts_key, 0)
         cooldown_remaining_sec = max(0.0, (SHOCK_COOLDOWN_MINUTES * 60) - (now_ts - last_shock_ts)) if last_shock_ts else 0.0
         in_cooldown = cooldown_remaining_sec > 0
 
+        protection_on = st.session_state.get("shock_protection_enabled", False)
+
         # OTOMATİK KAPATMA: Anahtar açıkken (otomatik veya elle), soğuma süresi
         # de bittiyse (şok yok + cooldown sıfırlandıysa) anahtar kendisi
         # False'a çekilir. Kullanıcı şok/soğuma sürerken elle kapatırsa, bu
         # blok onu tekrar açmaz - manuel kapatma her zaman önceliklidir.
-        if shock_protection_enabled and not is_shock and not in_cooldown:
+        if protection_on and not is_shock and not in_cooldown:
             st.session_state["shock_protection_enabled"] = False
-            shock_protection_enabled = False
+            protection_on = False
             st.rerun()
 
         # Koruma fiilen sadece anahtar açıkken (otomatik veya manuel) yeni
         # girişi durdurur. Kullanıcı elle kapatırsa - şok sürse de - bot
         # normal giriş yapar, bu bilinçli bir manuel müdahale kabul edilir.
-        block_new_entries = shock_protection_enabled and (is_shock or in_cooldown)
+        block_new_entries = protection_on and (is_shock or in_cooldown)
 
         result = run_staged_strategy("scalp", "SCALP", scalp_prefix, current_price, dfs_by_tf, SCALP_AMOUNTS, live_trading_enabled, allow_new_entries=not block_new_entries)
         chart_dfs = {"1m": df_1m, "5m": df_5m, "15m": df_15m}
 
-        if shock_protection_enabled and is_shock:
+        if protection_on and is_shock:
             shock_parts = [f"{k}: {v['change_pct']:+.2f}% (eşik %{v['threshold_pct']:.1f})" for k, v in shock_detail.items() if v["exceeded"]]
             st.error(f"🚨 ANİ HAREKET TESPİT EDİLDİ ({' · '.join(shock_parts)}). Koruma otomatik açıldı, yeni giriş durduruldu. Açık pozisyonların TP/SL'i normal çalışıyor. Sakinleştikten sonra {SHOCK_COOLDOWN_MINUTES} dk soğuma süresi uygulanacak.")
             last_shock_warn = st.session_state.get(f"{base_prefix}shock_last_warn", 0)
             if now_ts - last_shock_warn > 300:
                 send_telegram_msg(f"🚨 *ANİ HAREKET* ({coin_title})\n{' · '.join(shock_parts)}\nKoruma otomatik açıldı, yeni giriş durduruldu. Mevcut pozisyon TP/SL normal çalışıyor.\nSoğuma süresi: {SHOCK_COOLDOWN_MINUTES} dk.")
                 st.session_state[f"{base_prefix}shock_last_warn"] = now_ts
-        elif is_shock and not shock_protection_enabled:
+        elif is_shock and not protection_on:
             shock_parts = [f"{k}: {v['change_pct']:+.2f}% (eşik %{v['threshold_pct']:.1f})" for k, v in shock_detail.items() if v["exceeded"]]
             st.warning(f"⚠️ ANİ HAREKET TESPİT EDİLDİ ({' · '.join(shock_parts)}) AMA koruma elle kapatılmış durumda - yeni giriş engellenmiyor.")
-        elif shock_protection_enabled and in_cooldown:
+        elif protection_on and in_cooldown:
             cooldown_min_left = cooldown_remaining_sec / 60
             st.warning(f"🧊 SOĞUMA SÜRESİ: Ani hareket geçti ama piyasanın gerçekten sakinleştiğinden emin olmak için yeni giriş {cooldown_min_left:.1f} dk daha durdurulacak. Açık pozisyonların TP/SL'i normal çalışıyor.")
 
