@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit.runtime.scriptrunner import RerunException
 import ccxt
 import pandas as pd
 import numpy as np
@@ -1126,6 +1127,17 @@ def scalp_fragment():
             render_history_popover()
         st.session_state["scalp_last_success"] = time.time()
 
+    except RerunException:
+        # KRİTİK: st.rerun() çağrıldığında Streamlit bu exception'ı fırlatarak
+        # sayfayı yeniden başlatır. Bu, normal bir hata DEĞİLDİR - aşağıdaki
+        # genel "except Exception" bloğu tarafından yanlışlıkla yakalanırsa,
+        # rerun "hataymış" gibi işlenir ve fonksiyon hem hatalı şekilde devam
+        # eder hem de gerçek rerun sonradan tetiklenir - bu da ekrandaki her
+        # panelin (Kademe Durumu, İşlem Geçmişi, Likidasyon Haritası, açık
+        # pozisyon) İKİ KEZ render olmasına yol açıyordu. Bu except bloğu
+        # rerun'u olduğu gibi yukarı fırlatır, Streamlit'in kendi mekanizması
+        # devralır - aşağıdaki genel except'e hiç düşmez.
+        raise
     except Exception as e:
         st.error(f"Scalp hatası, 10s sonra tekrar denenecek: {type(e).__name__}: {str(e)[:200]}")
         try:
