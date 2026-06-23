@@ -23,6 +23,18 @@ SCALP_AMOUNTS = [0.0001, 0.0004, 0.0015]  # toplam 0.0020 BTC
 
 ATR_TP_MULT, ATR_SL_MULT = 1.0, 1.5
 
+# ANİ HAREKET KORUMASI: Flash-crash/flash-pump anlarında NW bandına "ucuz/pahalı"
+# diye yanlış zamanda giriş yapılmasını önlemek için, birden fazla zaman
+# penceresinde fiyatın ne kadar hareket ettiği kontrol edilir. Pencerelerden
+# HERHANGİ BİRİ eşiği aşarsa yeni giriş durur (TP/SL'e dokunulmaz, sadece yeni
+# pozisyon açılmaz). Tek bir sabit yüzde eşiği kullanılır, basit ve anlaşılır.
+SHOCK_THRESHOLD_PCT = 3.0   # Bu yüzdeyi aşan hareket "ani" sayılır
+SHOCK_WINDOWS = {
+    "1dk":  1,   # df_1m üzerinde 1 bar geriye (son 1 dakika)
+    "5dk":  5,   # df_1m üzerinde 5 bar geriye (son 5 dakika)
+    "15dk": 1,   # df_15m üzerinde 1 bar geriye (son 15 dakika)
+}
+
 # MEXC Futures (Vadeli) bağlantısı. API key/secret st.secrets üzerinden okunur.
 MEXC_API_KEY = st.secrets.get("MEXC_API_KEY", "")
 MEXC_API_SECRET = st.secrets.get("MEXC_API_SECRET", "")
@@ -136,19 +148,16 @@ st.markdown(
         visibility: hidden !important;
     }
     /* Streamlit'in kendi platform arayüzü (üst Fork/GitHub/Share/Deploy çubuğu,
-       hamburger menü, sağ üst köşedeki header ve sağ alttaki "Hosted with
-       Streamlit" rozeti) ekranımızdaki yazıların üzerine biniyordu - tamamen
-       kaldırılıyor ki kendi içeriğimiz tam görünür kalsın. Birden fazla
-       data-testid/class adı veriliyor çünkü Streamlit sürümden sürüme bu
-       isimleri değiştiriyor (örn. v1.38'de stDeployButton -> stAppDeployButton).
-       stHeader'ı display:none yapmıyoruz (bazı sürümlerde sidebar açma/kapama
-       oku header içinde olabilir) - bunun yerine şeffaf ve yüksekliksiz
-       yapıyoruz, sadece görsel olarak kayboluyor ama olası gömülü kontroller
-       hâlâ tıklanabilir kalıyor. */
+       hamburger menü ve sağ alttaki "Hosted with Streamlit" rozeti)
+       ekranımızdaki yazıların üzerine biniyordu. Header'ın KENDİSİNİ
+       (display:none veya height:0) hiç değiştirmiyoruz - sidebar açma/kapama
+       oku o elementin içinde duruyor, header'ı sıfırlamak o oku da yok
+       ediyordu. Bunun yerine SADECE header'ın içindeki toolbar/deploy
+       butonunu hedefliyoruz, header'ın kendisi ve sidebar kontrolü olduğu
+       gibi kalıyor. Birden fazla data-testid/class adı veriliyor çünkü
+       Streamlit sürümden sürüme bu isimleri değiştiriyor. */
     [data-testid="stHeader"] {
         background: transparent !important;
-        height: 0 !important;
-        min-height: 0 !important;
     }
     [data-testid="stToolbar"],
     [data-testid="stToolbarActions"],
@@ -310,6 +319,39 @@ def estimate_liquidation_pools(symbol, is_volatile=False):
         )
     except Exception:
         return pd.DataFrame(), pd.DataFrame()
+
+def detect_price_shock(df_1m, df_15m, current_price):
+    """ANİ HAREKET TESPİTİ: Birden fazla zaman penceresinde (1dk/5dk/15dk)
+    fiyatın şu anki seviyeden ne kadar uzaklaştığını ölçer. Pencerelerden
+    HERHANGİ BİRİ SHOCK_THRESHOLD_PCT'yi aşarsa "şok" durumu tetiklenir.
+    Basit ve anlaşılır kalması için tek sabit yüzde eşiği kullanılır,
+    kademeli/karmaşık bir sistem değildir.
+
+    Döner: (is_shock: bool, detail: dict) - detail her pencerenin yüzde
+    değişimini ve eşik aşılıp aşılmadığını içerir, arayüzde/Telegram'da
+    gösterilebilir.
+    """
+    detail = {}
+    is_shock = False
+    try:
+        for window_label, bars_back in SHOCK_WINDOWS.items():
+            src_df = df_15m if window_label == "15dk" else df_1m
+            if len(src_df) <= bars_back:
+                continue
+            ref_price = src_df.iloc[-1 - bars_back]["Kapanis"]
+            if ref_price <= 0:
+                continue
+            change_pct = ((current_price / ref_price) - 1) * 100
+            exceeded = abs(change_pct) >= SHOCK_THRESHOLD_PCT
+            detail[window_label] = {"change_pct": change_pct, "exceeded": exceeded}
+            if exceeded:
+                is_shock = True
+    except Exception:
+        # Veri eksik/bozuksa güvenli taraf: şok YOK say, mevcut giriş mantığı
+        # normal çalışsın - bu fonksiyon asla botu kilitlememeli, sadece ek
+        # bir güvenlik katmanı olmalı.
+        return False, {}
+    return is_shock, detail
 
 def send_telegram_msg(message):
     if not telegram_token or not telegram_chat_id:
@@ -768,8 +810,8 @@ st.markdown(
     .kyoun-topbar { display:flex; gap:0; padding:0; margin-bottom:0.6rem; }
     div[data-testid="stMetric"] { background:#161B22; border:1px solid #2A2E37; border-radius:10px; padding:10px 14px; }
     div[data-testid="stMetricLabel"] { font-size:0.78rem; }
-    /* Header artık 0 yükseklikte olduğu için üst boşluğu sıkılaştır */
-    [data-testid="stMainBlockContainer"] { padding-top: 0.8rem !important; }
+    /* Sidebar ile ana içerik arası boşluğu sıkılaştır */
+    [data-testid="stMainBlockContainer"] { padding-top: 1.2rem !important; }
     section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] { gap: 0.4rem; }
     /* Kademe durumu kutularındaki uzun metinlerin taşmasını önle, satır aralığını düzelt */
     div[data-testid="stVerticalBlockBorderWrapper"] p { line-height: 1.45 !important; }
@@ -1015,8 +1057,18 @@ def scalp_fragment():
         dfs_by_tf = {"1m": df_1m, "5m": df_5m, "15m": df_15m}
         labels = ["K1 (1m)", "K2 (5m)", "K3 (15m)"]
 
-        result = run_staged_strategy("scalp", "SCALP", scalp_prefix, current_price, dfs_by_tf, SCALP_AMOUNTS, live_trading_enabled, allow_new_entries=True)
+        is_shock, shock_detail = detect_price_shock(df_1m, df_15m, current_price)
+
+        result = run_staged_strategy("scalp", "SCALP", scalp_prefix, current_price, dfs_by_tf, SCALP_AMOUNTS, live_trading_enabled, allow_new_entries=not is_shock)
         chart_dfs = {"1m": df_1m, "5m": df_5m, "15m": df_15m}
+
+        if is_shock:
+            shock_parts = [f"{k}: {v['change_pct']:+.2f}%" for k, v in shock_detail.items()]
+            st.error(f"🚨 ANİ HAREKET TESPİT EDİLDİ ({' · '.join(shock_parts)}) — eşik %{SHOCK_THRESHOLD_PCT:.0f}. Yeni giriş geçici olarak durduruldu, açık pozisyonların TP/SL'i normal çalışıyor.")
+            last_shock_warn = st.session_state.get(f"{base_prefix}shock_last_warn", 0)
+            if time.time() - last_shock_warn > 300:
+                send_telegram_msg(f"🚨 *ANİ HAREKET* ({coin_title})\n{' · '.join(shock_parts)}\nEşik: %{SHOCK_THRESHOLD_PCT:.0f}\nYeni giriş durduruldu, mevcut pozisyon TP/SL normal çalışıyor.")
+                st.session_state[f"{base_prefix}shock_last_warn"] = time.time()
 
         info1, info2, info3 = st.columns(3)
         info1.metric("Anlık Fiyat", f"${current_price:,.2f}", f"{price_change_24h:+.2f}%")
