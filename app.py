@@ -722,7 +722,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
                     save_state_to_db()
                     s_status = st.session_state[f"{prefix}s_status"]
 
-            # --- LONG GİRİŞ (sıralı kademe, GERÇEK bant ayrışması beklenir) ---
+            # --- LONG GİRİŞ (DÜZELTİLMİŞ) ---
             for idx in range(3):
                 if not allow_new_entries:
                     break
@@ -731,23 +731,29 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
                 if current_price <= nw_alt[idx] and can_enter and band_ready:
                     val = amounts[idx]
                     order_result = place_futures_order(selected_symbol, "buy", val, is_live=is_live)
-                    entry_margin = (val * current_price) / BOT_LEVERAGE
-                    adjust_balance_atomic(-entry_margin)
-                    st.session_state[f"{prefix}l_crypto"] += val
-                    st.session_state[f"{prefix}l_margin_used"] += entry_margin
-                    prev_notional = st.session_state[f"{prefix}l_avg_price"] * (st.session_state[f"{prefix}l_crypto"] - val)
-                    st.session_state[f"{prefix}l_avg_price"] = (prev_notional + val * current_price) / st.session_state[f"{prefix}l_crypto"]
-                    st.session_state[f"{prefix}l_status"][idx] = True
-                    st.session_state[f"{prefix}l_entry_prices"][idx] = current_price
-                    mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
-                    note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                    msg = f"📈 *[{mode_tag}] {strategy_tag} LONG K{idx+1} SATIN ALINDI ({coin_title})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} BTC{note}"
-                    send_telegram_msg(msg)
-                    st.session_state[f"{base_prefix}log_history"].append(msg)
-                    save_state_to_db()
-                    break
+                    
+                    # Bakiye ve state güncellemesi sadece EMİR BAŞARILIYSA çalışacak
+                    if order_result.get("status") == "success" or order_result.get("paper") == True:
+                        entry_margin = (val * current_price) / BOT_LEVERAGE
+                        adjust_balance_atomic(-entry_margin)
+                        
+                        st.session_state[f"{prefix}l_crypto"] += val
+                        st.session_state[f"{prefix}l_margin_used"] += entry_margin
+                        prev_notional = st.session_state[f"{prefix}l_avg_price"] * (st.session_state[f"{prefix}l_crypto"] - val)
+                        st.session_state[f"{prefix}l_avg_price"] = (prev_notional + val * current_price) / st.session_state[f"{prefix}l_crypto"]
+                        st.session_state[f"{prefix}l_status"][idx] = True
+                        st.session_state[f"{prefix}l_entry_prices"][idx] = current_price
+                        
+                        mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
+                        msg = f"📈 *[{mode_tag}] {strategy_tag} LONG K{idx+1} SATIN ALINDI ({coin_title})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} BTC"
+                        send_telegram_msg(msg)
+                        st.session_state[f"{base_prefix}log_history"].append(msg)
+                        save_state_to_db()
+                        break
+                    else:
+                        st.sidebar.error(f"Long emri başarısız: {order_result.get('error')}")
 
-            # --- SHORT GİRİŞ (GERÇEK bant ayrışması beklenir) ---
+            # --- SHORT GİRİŞ (DÜZELTİLMİŞ) ---
             for idx in range(3):
                 if not allow_new_entries:
                     break
@@ -756,69 +762,27 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
                 if current_price >= nw_ust[idx] and can_enter and band_ready:
                     val = amounts[idx]
                     order_result = place_futures_order(selected_symbol, "sell", val, is_live=is_live)
-                    entry_margin = (val * current_price) / BOT_LEVERAGE
-                    adjust_balance_atomic(-entry_margin)
-                    st.session_state[f"{prefix}s_crypto"] += val
-                    st.session_state[f"{prefix}s_margin_used"] += entry_margin
-                    prev_notional = st.session_state[f"{prefix}s_avg_price"] * (st.session_state[f"{prefix}s_crypto"] - val)
-                    st.session_state[f"{prefix}s_avg_price"] = (prev_notional + val * current_price) / st.session_state[f"{prefix}s_crypto"]
-                    st.session_state[f"{prefix}s_status"][idx] = True
-                    st.session_state[f"{prefix}s_entry_prices"][idx] = current_price
-                    mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
-                    note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-                    msg = f"📈 *[{mode_tag}] {strategy_tag} SHORT K{idx+1} AÇILDI ({coin_title})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} BTC{note}"
-                    send_telegram_msg(msg)
-                    st.session_state[f"{base_prefix}log_history"].append(msg)
-                    save_state_to_db()
-                    break
-        finally:
-            release_entry_lock()
-
-    return {
-        "nw_alt": nw_alt, "nw_ust": nw_ust,
-        "tf_names": tf_names, "tp_distance": tp_distance, "sl_distance": sl_distance, "atr_k3": atr_k3,
-        "alt_ready": alt_ready, "ust_ready": ust_ready, "min_gaps_alt": min_gaps_alt, "min_gaps_ust": min_gaps_ust,
-    }
-
-def close_position_manual(strategy_label, prefix, direction, current_price, is_live):
-    """LONG veya SHORT pozisyonu manuel olarak (kullanıcı butonu) kapatır."""
-    if not acquire_entry_lock():
-        st.warning("⏳ Şu anda otomatik bir işlem sürüyor, lütfen birkaç saniye sonra tekrar dene.")
-        return
-    try:
-        strategy_key = "scalp"
-        load_state(strategy_key, force_db_refresh=True)
-        side_field = "l" if direction == "LONG" else "s"
-        avg = st.session_state[f"{prefix}{side_field}_avg_price"]
-        amt = st.session_state[f"{prefix}{side_field}_crypto"]
-        margin_used_total = st.session_state[f"{prefix}{side_field}_margin_used"]
-        if amt <= 0:
-            return
-        close_side = "sell" if direction == "LONG" else "buy"
-        order_result = place_futures_order(selected_symbol, close_side, amt, is_live=is_live, reduce_only=True)
-        if direction == "LONG":
-            pnl_usd = (current_price - avg) * amt
-            pnl_pct = ((current_price / avg) - 1) * 100 if avg > 0 else 0.0
-        else:
-            pnl_ratio = (avg - current_price) / avg if avg > 0 else 0.0
-            notional = amt * avg
-            pnl_usd = notional * pnl_ratio
-            pnl_pct = pnl_ratio * 100
-        adjust_balance_atomic(margin_used_total + pnl_usd)
-        mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
-        note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-        strategy_emoji = "⚡"
-        msg = f"✋ *[{mode_tag}] {strategy_emoji} {strategy_label} {direction} MANUEL KAPATILDI ({coin_title})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){note}"
-        send_telegram_msg(msg)
-        st.session_state[f"{base_prefix}log_history"].append(msg)
-        record_trade(strategy_label, direction, "Manuel Kapatma", avg, current_price, amt, pnl_usd, pnl_pct, is_live)
-        st.session_state[f"{prefix}{side_field}_crypto"], st.session_state[f"{prefix}{side_field}_margin_used"], st.session_state[f"{prefix}{side_field}_avg_price"] = 0.0, 0.0, 0.0
-        st.session_state[f"{prefix}{side_field}_status"] = [False, False, False]
-        st.session_state[f"{prefix}{side_field}_entry_prices"] = [0.0, 0.0, 0.0]
-        save_state_to_db()
-    finally:
-        release_entry_lock()
-
+                    
+                    # Bakiye ve state güncellemesi sadece EMİR BAŞARILIYSA çalışacak
+                    if order_result.get("status") == "success" or order_result.get("paper") == True:
+                        entry_margin = (val * current_price) / BOT_LEVERAGE
+                        adjust_balance_atomic(-entry_margin)
+                        
+                        st.session_state[f"{prefix}s_crypto"] += val
+                        st.session_state[f"{prefix}s_margin_used"] += entry_margin
+                        prev_notional = st.session_state[f"{prefix}s_avg_price"] * (st.session_state[f"{prefix}s_crypto"] - val)
+                        st.session_state[f"{prefix}s_avg_price"] = (prev_notional + val * current_price) / st.session_state[f"{prefix}s_crypto"]
+                        st.session_state[f"{prefix}s_status"][idx] = True
+                        st.session_state[f"{prefix}s_entry_prices"][idx] = current_price
+                        
+                        mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
+                        msg = f"📈 *[{mode_tag}] {strategy_tag} SHORT K{idx+1} AÇILDI ({coin_title})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} BTC"
+                        send_telegram_msg(msg)
+                        st.session_state[f"{base_prefix}log_history"].append(msg)
+                        save_state_to_db()
+                        break
+                    else:
+                        st.sidebar.error(f"Short emri başarısız: {order_result.get('error')}")
 # ================= STATE YÜKLEME =================
 scalp_prefix = load_state("scalp")
 is_admin = st.session_state.get("user_role") == "admin"
