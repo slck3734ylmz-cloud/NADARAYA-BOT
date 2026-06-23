@@ -22,7 +22,7 @@ TF_PARAMS = {
     "1d":  {"limit": 60,  "h": 6, "rsi_period": 14, "std_window": 14},
 }
 
-# DCA: volatiliteye göre dinamik zaman d ilimi + büyük miktarlar (uzun vadeli ortalama düşürme)
+# DCA: volatiliteye göre dinamik zaman dilimi + büyük miktarlar (uzun vadeli ortalama düşürme)
 DCA_AMOUNTS = [0.0001, 0.0004, 0.0015]   # 1:4:15 oranı, toplam 0.0020 BTC
 # Scalp: her zaman sabit kısa zaman dilimi + aynı miktarlar, ayrı/bağımsız pozisyon
 SCALP_AMOUNTS = [0.0001, 0.0004, 0.0015]  # toplam 0.0020 BTC
