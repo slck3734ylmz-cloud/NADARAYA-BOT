@@ -487,14 +487,29 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
 
     raw_alt = [df.iloc[-2][f"NW_Alt_{tf}"] for df, tf in zip(dfk, tf_names)]
     raw_ust = [df.iloc[-2][f"NW_Ust_{tf}"] for df, tf in zip(dfk, tf_names)]
+    atr_vals = [df.iloc[-2]["ATR"] for df in dfk]
 
-    # Sıralama koruması: K1 > K2 > K3 (alt), K1 < K2 < K3 (üst) garantilenir.
+    # GELİŞMİŞ KADEME SİSTEMİ: Önceden K2/K3, K1'den sadece yapay/sabit bir %0.3
+    # mesafede olacak şekilde ZORLANIYORDU - bantlar gerçekte birbirine çok yakınsa
+    # bile kademe "ayrışmış" sayılıyordu. Artık her kademenin GERÇEK NW bandı
+    # kullanılır; bir sonraki kademe, öncekinden MIN_STAGE_GAP_ATR_MULT x ATR kadar
+    # gerçekten ayrışana kadar "hazır değil" sayılır ve fiyat o seviyeye gelse de
+    # açılmaz - sabırla bir sonraki gerçek Nadaraya-Watson değeri beklenir.
+    MIN_STAGE_GAP_ATR_MULT = 0.5
     alt_base = [raw_alt[0]]
-    for v in raw_alt[1:]:
-        alt_base.append(min(v, alt_base[-1] * 0.997))
+    alt_ready = [True]
+    for i in range(1, 3):
+        min_gap = MIN_STAGE_GAP_ATR_MULT * atr_vals[i]
+        gap = alt_base[-1] - raw_alt[i]
+        alt_base.append(raw_alt[i])
+        alt_ready.append(gap >= min_gap)
     ust_base = [raw_ust[0]]
-    for v in raw_ust[1:]:
-        ust_base.append(max(v, ust_base[-1] * 1.003))
+    ust_ready = [True]
+    for i in range(1, 3):
+        min_gap = MIN_STAGE_GAP_ATR_MULT * atr_vals[i]
+        gap = raw_ust[i] - ust_base[-1]
+        ust_base.append(raw_ust[i])
+        ust_ready.append(gap >= min_gap)
 
     l_status = st.session_state[f"{prefix}l_status"]
     s_status = st.session_state[f"{prefix}s_status"]
@@ -588,13 +603,14 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
             save_state_to_db()
             s_status = st.session_state[f"{prefix}s_status"]
 
-    # --- LONG GİRİŞ (sıralı kademe, RSI onaylı) ---
+    # --- LONG GİRİŞ (sıralı kademe, RSI onaylı, GERÇEK bant ayrışması beklenir) ---
     for idx in range(3):
         if not allow_new_entries:
             break
         rsi_ok = rsi_vals[idx] < RSI_MIDPOINT
         can_enter = (idx == 0 or l_status[idx-1]) and not l_status[idx]
-        if current_price <= nw_alt[idx] and rsi_ok and can_enter:
+        band_ready = alt_ready[idx]
+        if current_price <= nw_alt[idx] and rsi_ok and can_enter and band_ready:
             val = amounts[idx]
             order_result = place_futures_order(selected_symbol, "buy", val, is_live=is_live)
             margin_used = (val * current_price) / BOT_LEVERAGE
@@ -612,13 +628,14 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
             save_state_to_db()
             break
 
-    # --- SHORT GİRİŞ ---
+    # --- SHORT GİRİŞ (GERÇEK bant ayrışması beklenir) ---
     for idx in range(3):
         if not allow_new_entries:
             break
         rsi_ok = rsi_vals[idx] > RSI_MIDPOINT
         can_enter = (idx == 0 or s_status[idx-1]) and not s_status[idx]
-        if current_price >= nw_ust[idx] and rsi_ok and can_enter:
+        band_ready = ust_ready[idx]
+        if current_price >= nw_ust[idx] and rsi_ok and can_enter and band_ready:
             val = amounts[idx]
             order_result = place_futures_order(selected_symbol, "sell", val, is_live=is_live)
             margin_used = (val * current_price) / BOT_LEVERAGE
@@ -639,6 +656,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
     return {
         "nw_alt": nw_alt, "nw_ust": nw_ust, "rsi_vals": rsi_vals, "rsi_prev_vals": rsi_prev_vals,
         "tf_names": tf_names, "tp_distance": tp_distance, "sl_distance": sl_distance, "atr_k3": atr_k3,
+        "alt_ready": alt_ready, "ust_ready": ust_ready,
     }
 
 def close_position_manual(strategy_label, prefix, direction, current_price, is_live):
@@ -799,6 +817,8 @@ def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_k
             for i in range(3):
                 if l_status[i]:
                     st.success(f"✅ {labels[i]} — Alındı @ {st.session_state[f'{prefix}l_entry_prices'][i]:,.2f}")
+                elif not result["alt_ready"][i]:
+                    st.container(border=True).write(f"🔸 {labels[i]} — Bekliyor @ {result['nw_alt'][i]:,.2f} *(bant henüz ayrışmadı)*")
                 else:
                     st.container(border=True).write(f"⏳ {labels[i]} — Bekliyor @ {result['nw_alt'][i]:,.2f}")
         with col_ks:
@@ -806,6 +826,8 @@ def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_k
             for i in range(3):
                 if s_status[i]:
                     st.success(f"✅ {labels[i]} — Açıldı @ {st.session_state[f'{prefix}s_entry_prices'][i]:,.2f}")
+                elif not result["ust_ready"][i]:
+                    st.container(border=True).write(f"🔸 {labels[i]} — Bekliyor @ {result['nw_ust'][i]:,.2f} *(bant henüz ayrışmadı)*")
                 else:
                     st.container(border=True).write(f"⏳ {labels[i]} — Bekliyor @ {result['nw_ust'][i]:,.2f}")
 
