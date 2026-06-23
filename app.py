@@ -1,3 +1,5 @@
+--- START OF FILE Paste June 23, 2026 - 1:07PM ---
+
 import streamlit as st
 import ccxt
 import pandas as pd
@@ -419,7 +421,7 @@ def load_state(strategy_key):
     db_error = None
     if supabase:
         try:
-            q = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).order("id", descending=True).limit(1).execute()
+            q = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).order("id", desc=True).limit(1).execute()
             if q.data:
                 d = q.data[0]
                 col = lambda name: f"{strategy_key}_{name}"
@@ -552,7 +554,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
     s_entries = st.session_state[f"{prefix}s_entry_prices"]
 
     nw_alt = [l_entries[i] if l_status[i] else alt_base[i] for i in range(3)]
-    nw_ust = [s_entries[i] if s_status[i] else ust_base[i] for i in range(3)]
+    nw_ust = [s_entries[i] if s_status[i] else raw_ust[i] for i in range(3)]
 
     if manual_lock:
         lock_key = f"{prefix}locked_prices"
