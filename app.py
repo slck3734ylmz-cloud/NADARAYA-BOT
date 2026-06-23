@@ -425,16 +425,24 @@ base_prefix = f"{selected_symbol}_"
 def empty_position_state():
     return {
         "l_status": [False, False, False], "l_entry_prices": [0.0, 0.0, 0.0],
-        "l_crypto": 0.0, "l_usd_spent": 0.0, "l_avg_price": 0.0,
+        "l_crypto": 0.0, "l_margin_used": 0.0, "l_avg_price": 0.0,
         "s_status": [False, False, False], "s_entry_prices": [0.0, 0.0, 0.0],
-        "s_crypto": 0.0, "s_usd_spent": 0.0, "s_avg_price": 0.0,
+        "s_crypto": 0.0, "s_margin_used": 0.0, "s_avg_price": 0.0,
     }
 
-def load_state(strategy_key):
+def load_state(strategy_key, force_db_refresh=False):
     """strategy_key: 'scalp'. Supabase'de tek bir satırda, kolon önekiyle
-    (scalp_) saklanır."""
+    (scalp_) saklanır.
+
+    force_db_refresh=True verilirse, session_state'te zaten 'loaded' işareti
+    olsa bile DB'den TAZE veri çekilir. Bu, her giriş/çıkış kararından hemen
+    önce çağrılmalı - aksi halde iki ayrı fragment çalıştırması (örn. 10s
+    auto-refresh ile çakışan bir manuel tetiklenme) aynı eski session_state
+    görüntüsüne bakıp aynı kademeyi iki kez açabilir.
+    """
     prefix = f"{base_prefix}{strategy_key}_"
-    if f"{prefix}loaded" in st.session_state:
+    already_loaded = f"{prefix}loaded" in st.session_state
+    if already_loaded and not force_db_refresh:
         return prefix
 
     defaults = empty_position_state()
@@ -442,29 +450,25 @@ def load_state(strategy_key):
     db_error = None
     if supabase:
         try:
-            q = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).order("id", desc=True).limit(1).execute()
+            q = supabase.table("bot_state").select("*").eq("coin_symbol", selected_symbol).limit(1).execute()
             if q.data:
                 d = q.data[0]
                 col = lambda name: f"{strategy_key}_{name}"
-                defaults["l_status"] = [d.get(col(f"l_status_{i}"), False) for i in range(3)]
+                defaults["l_status"] = [bool(d.get(col(f"l_status_{i}"), False)) for i in range(3)]
                 defaults["l_entry_prices"] = [d.get(col(f"l_entry_{i}"), 0.0) for i in range(3)]
                 defaults["l_crypto"] = d.get(col("l_crypto"), 0.0)
-                defaults["l_usd_spent"] = d.get(col("l_usd_spent"), 0.0)
+                defaults["l_margin_used"] = d.get(col("l_margin_used"), 0.0)
                 defaults["l_avg_price"] = d.get(col("l_avg_price"), 0.0)
-                defaults["s_status"] = [d.get(col(f"s_status_{i}"), False) for i in range(3)]
+                defaults["s_status"] = [bool(d.get(col(f"s_status_{i}"), False)) for i in range(3)]
                 defaults["s_entry_prices"] = [d.get(col(f"s_entry_{i}"), 0.0) for i in range(3)]
                 defaults["s_crypto"] = d.get(col("s_crypto"), 0.0)
-                defaults["s_usd_spent"] = d.get(col("s_usd_spent"), 0.0)
+                defaults["s_margin_used"] = d.get(col("s_margin_used"), 0.0)
                 defaults["s_avg_price"] = d.get(col("s_avg_price"), 0.0)
                 st.session_state[f"{base_prefix}balance_usd"] = d.get("balance_usd", 100.0)
                 st.session_state[f"{base_prefix}log_history"] = d.get("log_history") or []
                 st.session_state[f"{base_prefix}trade_history"] = d.get("trade_history") or []
                 loaded = True
         except Exception as e:
-            # ÖNEMLİ: Hata artık sessizce yutulmuyor. Eğer Supabase'den veri
-            # çekilemezse (eksik kolon, bağlantı sorunu, yetki hatası vb.), bu
-            # durum kullanıcıya açıkça gösterilir - aksi halde "geçmiş sıfırlandı"
-            # sanılan durumun gerçek sebebi (DB hatası) hiç görülemezdi.
             db_error = f"{type(e).__name__}: {str(e)[:200]}"
 
     for k, v in defaults.items():
@@ -478,9 +482,13 @@ def load_state(strategy_key):
     st.session_state[f"{prefix}loaded"] = True
     return prefix
 
+
 def save_state_to_db():
+    """DB tek doğruluk kaynağıdır - bu fonksiyon session_state'in TAMAMINI
+    DB'ye yazar. coin_symbol primary key olduğu için on_conflict açıkça
+    belirtilir; bu satır her zaman güncellenir, yeni satır oluşmaz."""
     if not supabase:
-        return
+        return False
     try:
         data = {"coin_symbol": selected_symbol,
                 "balance_usd": st.session_state.get(f"{base_prefix}balance_usd", 100.0),
@@ -491,10 +499,10 @@ def save_state_to_db():
             col = lambda name: f"{strategy_key}_{name}"
             st_data = st.session_state
             data[col("l_crypto")] = st_data.get(f"{prefix}l_crypto", 0.0)
-            data[col("l_usd_spent")] = st_data.get(f"{prefix}l_usd_spent", 0.0)
+            data[col("l_margin_used")] = st_data.get(f"{prefix}l_margin_used", 0.0)
             data[col("l_avg_price")] = st_data.get(f"{prefix}l_avg_price", 0.0)
             data[col("s_crypto")] = st_data.get(f"{prefix}s_crypto", 0.0)
-            data[col("s_usd_spent")] = st_data.get(f"{prefix}s_usd_spent", 0.0)
+            data[col("s_margin_used")] = st_data.get(f"{prefix}s_margin_used", 0.0)
             data[col("s_avg_price")] = st_data.get(f"{prefix}s_avg_price", 0.0)
             l_status = st_data.get(f"{prefix}l_status", [False, False, False])
             s_status = st_data.get(f"{prefix}s_status", [False, False, False])
@@ -505,9 +513,49 @@ def save_state_to_db():
                 data[col(f"s_status_{i}")] = s_status[i]
                 data[col(f"l_entry_{i}")] = l_entries[i]
                 data[col(f"s_entry_{i}")] = s_entries[i]
-        supabase.table("bot_state").upsert(data).execute()
+        supabase.table("bot_state").upsert(data, on_conflict="coin_symbol").execute()
+        return True
     except Exception as e:
         st.error(f"Veritabanı kaydı başarısız: {type(e).__name__}: {str(e)[:200]}")
+        return False
+
+
+def acquire_entry_lock(timeout_sec=20):
+    """Aynı kademenin iki ayrı fragment/oturum çalıştırması tarafından aynı
+    anda açılmasını engeller. DB'deki entry_lock alanını kontrol eder:
+    - Kilit yoksa veya süresi geçmişse (timeout_sec) -> kilidi biz alırız, True döner.
+    - Kilit başka biri tarafından az önce alınmışsa -> False döner, çağıran taraf
+      bu turda hiçbir giriş/çıkış işlemi yapmamalıdır.
+    Supabase yoksa (yerel test gibi) her zaman True döner - kilit devre dışı.
+    """
+    if not supabase:
+        return True
+    try:
+        now_ts = time.time()
+        q = supabase.table("bot_state").select("entry_lock, entry_lock_ts").eq("coin_symbol", selected_symbol).limit(1).execute()
+        if q.data:
+            row = q.data[0]
+            locked = row.get("entry_lock", False)
+            lock_ts = row.get("entry_lock_ts", 0.0) or 0.0
+            if locked and (now_ts - lock_ts) < timeout_sec:
+                return False  # başka bir çalıştırma kilidi tutuyor, bekle
+        supabase.table("bot_state").update({"entry_lock": True, "entry_lock_ts": now_ts}).eq("coin_symbol", selected_symbol).execute()
+        return True
+    except Exception:
+        # Kilit mekanizması kendisi hata verirse botu tamamen durdurmamalı -
+        # güvenli taraf: izin ver, ama bu çok nadir bir durum olmalı.
+        return True
+
+
+def release_entry_lock():
+    if not supabase:
+        return
+    try:
+        supabase.table("bot_state").update({"entry_lock": False}).eq("coin_symbol", selected_symbol).execute()
+    except Exception:
+        pass
+
+
 
 def record_trade(strategy_label, direction, exit_reason, entry_price, exit_price, amount, pnl_usd, pnl_pct, is_live):
     trade_record = {
@@ -579,116 +627,134 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
     scale_factor = tp_distance / raw_tp_distance if raw_tp_distance > 0 else 1.0
     sl_distance = ATR_SL_MULT * atr_k3 * scale_factor
 
-    # --- LONG ÇIKIŞ (sadece K3 alındıysa stop-loss aktif) ---
-    if sum(l_status) > 0:
-        avg = st.session_state[f"{prefix}l_avg_price"]
-        amt = st.session_state[f"{prefix}l_crypto"]
-        usd_spent = st.session_state[f"{prefix}l_usd_spent"]
-        tp = avg + tp_distance
-        sl = avg - sl_distance
-        exit_reason = None
-        if l_status[2] and current_price <= sl:
-            exit_reason = "Stop-Loss"
-        elif current_price >= tp:
-            exit_reason = "Kar-Al"
-        if exit_reason:
-            order_result = place_futures_order(selected_symbol, "sell", amt, is_live=is_live, reduce_only=True)
-            pnl_usd = (current_price - avg) * amt
-            pnl_pct = ((current_price / avg) - 1) * 100 if avg > 0 else 0.0
-            margin_used = usd_spent / BOT_LEVERAGE
-            st.session_state[f"{base_prefix}balance_usd"] += margin_used + pnl_usd
-            mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
-            note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-            emoji = "🔴" if exit_reason == "Stop-Loss" else "🟢"
-            msg = f"{emoji} *[{mode_tag}] {strategy_tag} LONG {exit_reason} ({coin_title})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){note}"
-            send_telegram_msg(msg)
-            st.session_state[f"{base_prefix}log_history"].append(msg)
-            record_trade(strategy_label, "LONG", exit_reason, avg, current_price, amt, pnl_usd, pnl_pct, is_live)
-            st.session_state[f"{prefix}l_crypto"], st.session_state[f"{prefix}l_usd_spent"], st.session_state[f"{prefix}l_avg_price"] = 0.0, 0.0, 0.0
-            st.session_state[f"{prefix}l_status"] = [False, False, False]
-            st.session_state[f"{prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
-            save_state_to_db()
-            l_status = st.session_state[f"{prefix}l_status"]
+    # Herhangi bir giriş/çıkış kararı vermeden önce kilidi almayı deneriz.
+    # Kilit alınamazsa (başka bir çalıştırma şu an işlem yapıyor), bu turda
+    # state'e DOKUNULMAZ - sadece görüntüleme amaçlı hesaplanan nw_alt/nw_ust/
+    # tp_distance gibi değerler döndürülür. Bu, aynı kademenin iki kez
+    # açılmasına yol açan yarış durumunu (race condition) kökünden engeller.
+    got_lock = acquire_entry_lock()
 
-    # --- SHORT ÇIKIŞ ---
-    if sum(s_status) > 0:
-        avg = st.session_state[f"{prefix}s_avg_price"]
-        amt = st.session_state[f"{prefix}s_crypto"]
-        usd_spent = st.session_state[f"{prefix}s_usd_spent"]
-        tp = avg - tp_distance
-        sl = avg + sl_distance
-        exit_reason = None
-        if s_status[2] and current_price >= sl:
-            exit_reason = "Stop-Loss"
-        elif current_price <= tp:
-            exit_reason = "Kar-Al"
-        if exit_reason:
-            order_result = place_futures_order(selected_symbol, "buy", amt, is_live=is_live, reduce_only=True)
-            pnl_ratio = (avg - current_price) / avg if avg > 0 else 0.0
-            pnl_usd = usd_spent * pnl_ratio
-            pnl_pct = pnl_ratio * 100
-            margin_used = usd_spent / BOT_LEVERAGE
-            st.session_state[f"{base_prefix}balance_usd"] += margin_used + pnl_usd
-            mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
-            note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-            emoji = "🔴" if exit_reason == "Stop-Loss" else "🟢"
-            msg = f"{emoji} *[{mode_tag}] {strategy_tag} SHORT {exit_reason} ({coin_title})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){note}"
-            send_telegram_msg(msg)
-            st.session_state[f"{base_prefix}log_history"].append(msg)
-            record_trade(strategy_label, "SHORT", exit_reason, avg, current_price, amt, pnl_usd, pnl_pct, is_live)
-            st.session_state[f"{prefix}s_crypto"], st.session_state[f"{prefix}s_usd_spent"], st.session_state[f"{prefix}s_avg_price"] = 0.0, 0.0, 0.0
-            st.session_state[f"{prefix}s_status"] = [False, False, False]
-            st.session_state[f"{prefix}s_entry_prices"] = [0.0, 0.0, 0.0]
-            save_state_to_db()
+    if got_lock:
+        try:
+            # Kilidi aldıktan sonra state'i DB'den TAZE okuyoruz - session_state
+            # eski olabilir (başka bir sekme/oturum az önce değiştirmiş olabilir).
+            load_state(strategy_key, force_db_refresh=True)
+            l_status = st.session_state[f"{prefix}l_status"]
             s_status = st.session_state[f"{prefix}s_status"]
 
-    # --- LONG GİRİŞ (sıralı kademe, GERÇEK bant ayrışması beklenir) ---
-    for idx in range(3):
-        if not allow_new_entries:
-            break
-        can_enter = (idx == 0 or l_status[idx-1]) and not l_status[idx]
-        band_ready = alt_ready[idx]
-        if current_price <= nw_alt[idx] and can_enter and band_ready:
-            val = amounts[idx]
-            order_result = place_futures_order(selected_symbol, "buy", val, is_live=is_live)
-            margin_used = (val * current_price) / BOT_LEVERAGE
-            st.session_state[f"{base_prefix}balance_usd"] -= margin_used
-            st.session_state[f"{prefix}l_crypto"] += val
-            st.session_state[f"{prefix}l_usd_spent"] += val * current_price
-            st.session_state[f"{prefix}l_status"][idx] = True
-            st.session_state[f"{prefix}l_entry_prices"][idx] = current_price
-            st.session_state[f"{prefix}l_avg_price"] = st.session_state[f"{prefix}l_usd_spent"] / st.session_state[f"{prefix}l_crypto"]
-            mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
-            note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-            msg = f"📈 *[{mode_tag}] {strategy_tag} LONG K{idx+1} SATIN ALINDI ({coin_title})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} BTC{note}"
-            send_telegram_msg(msg)
-            st.session_state[f"{base_prefix}log_history"].append(msg)
-            save_state_to_db()
-            break
+            # --- LONG ÇIKIŞ (sadece K3 alındıysa stop-loss aktif) ---
+            if sum(l_status) > 0:
+                avg = st.session_state[f"{prefix}l_avg_price"]
+                amt = st.session_state[f"{prefix}l_crypto"]
+                margin_used_total = st.session_state[f"{prefix}l_margin_used"]
+                tp = avg + tp_distance
+                sl = avg - sl_distance
+                exit_reason = None
+                if l_status[2] and current_price <= sl:
+                    exit_reason = "Stop-Loss"
+                elif current_price >= tp:
+                    exit_reason = "Kar-Al"
+                if exit_reason:
+                    order_result = place_futures_order(selected_symbol, "sell", amt, is_live=is_live, reduce_only=True)
+                    pnl_usd = (current_price - avg) * amt
+                    pnl_pct = ((current_price / avg) - 1) * 100 if avg > 0 else 0.0
+                    st.session_state[f"{base_prefix}balance_usd"] += margin_used_total + pnl_usd
+                    mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
+                    note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+                    emoji = "🔴" if exit_reason == "Stop-Loss" else "🟢"
+                    msg = f"{emoji} *[{mode_tag}] {strategy_tag} LONG {exit_reason} ({coin_title})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){note}"
+                    send_telegram_msg(msg)
+                    st.session_state[f"{base_prefix}log_history"].append(msg)
+                    record_trade(strategy_label, "LONG", exit_reason, avg, current_price, amt, pnl_usd, pnl_pct, is_live)
+                    st.session_state[f"{prefix}l_crypto"], st.session_state[f"{prefix}l_margin_used"], st.session_state[f"{prefix}l_avg_price"] = 0.0, 0.0, 0.0
+                    st.session_state[f"{prefix}l_status"] = [False, False, False]
+                    st.session_state[f"{prefix}l_entry_prices"] = [0.0, 0.0, 0.0]
+                    save_state_to_db()
+                    l_status = st.session_state[f"{prefix}l_status"]
 
-    # --- SHORT GİRİŞ (GERÇEK bant ayrışması beklenir) ---
-    for idx in range(3):
-        if not allow_new_entries:
-            break
-        can_enter = (idx == 0 or s_status[idx-1]) and not s_status[idx]
-        band_ready = ust_ready[idx]
-        if current_price >= nw_ust[idx] and can_enter and band_ready:
-            val = amounts[idx]
-            order_result = place_futures_order(selected_symbol, "sell", val, is_live=is_live)
-            margin_used = (val * current_price) / BOT_LEVERAGE
-            st.session_state[f"{base_prefix}balance_usd"] -= margin_used
-            st.session_state[f"{prefix}s_crypto"] += val
-            st.session_state[f"{prefix}s_usd_spent"] += val * current_price
-            st.session_state[f"{prefix}s_status"][idx] = True
-            st.session_state[f"{prefix}s_entry_prices"][idx] = current_price
-            st.session_state[f"{prefix}s_avg_price"] = st.session_state[f"{prefix}s_usd_spent"] / st.session_state[f"{prefix}s_crypto"]
-            mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
-            note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-            msg = f"📈 *[{mode_tag}] {strategy_tag} SHORT K{idx+1} AÇILDI ({coin_title})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} BTC{note}"
-            send_telegram_msg(msg)
-            st.session_state[f"{base_prefix}log_history"].append(msg)
-            save_state_to_db()
-            break
+            # --- SHORT ÇIKIŞ ---
+            if sum(s_status) > 0:
+                avg = st.session_state[f"{prefix}s_avg_price"]
+                amt = st.session_state[f"{prefix}s_crypto"]
+                margin_used_total = st.session_state[f"{prefix}s_margin_used"]
+                tp = avg - tp_distance
+                sl = avg + sl_distance
+                exit_reason = None
+                if s_status[2] and current_price >= sl:
+                    exit_reason = "Stop-Loss"
+                elif current_price <= tp:
+                    exit_reason = "Kar-Al"
+                if exit_reason:
+                    order_result = place_futures_order(selected_symbol, "buy", amt, is_live=is_live, reduce_only=True)
+                    pnl_ratio = (avg - current_price) / avg if avg > 0 else 0.0
+                    notional = amt * avg
+                    pnl_usd = notional * pnl_ratio
+                    pnl_pct = pnl_ratio * 100
+                    st.session_state[f"{base_prefix}balance_usd"] += margin_used_total + pnl_usd
+                    mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
+                    note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+                    emoji = "🔴" if exit_reason == "Stop-Loss" else "🟢"
+                    msg = f"{emoji} *[{mode_tag}] {strategy_tag} SHORT {exit_reason} ({coin_title})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){note}"
+                    send_telegram_msg(msg)
+                    st.session_state[f"{base_prefix}log_history"].append(msg)
+                    record_trade(strategy_label, "SHORT", exit_reason, avg, current_price, amt, pnl_usd, pnl_pct, is_live)
+                    st.session_state[f"{prefix}s_crypto"], st.session_state[f"{prefix}s_margin_used"], st.session_state[f"{prefix}s_avg_price"] = 0.0, 0.0, 0.0
+                    st.session_state[f"{prefix}s_status"] = [False, False, False]
+                    st.session_state[f"{prefix}s_entry_prices"] = [0.0, 0.0, 0.0]
+                    save_state_to_db()
+                    s_status = st.session_state[f"{prefix}s_status"]
+
+            # --- LONG GİRİŞ (sıralı kademe, GERÇEK bant ayrışması beklenir) ---
+            for idx in range(3):
+                if not allow_new_entries:
+                    break
+                can_enter = (idx == 0 or l_status[idx-1]) and not l_status[idx]
+                band_ready = alt_ready[idx]
+                if current_price <= nw_alt[idx] and can_enter and band_ready:
+                    val = amounts[idx]
+                    order_result = place_futures_order(selected_symbol, "buy", val, is_live=is_live)
+                    entry_margin = (val * current_price) / BOT_LEVERAGE
+                    st.session_state[f"{base_prefix}balance_usd"] -= entry_margin
+                    st.session_state[f"{prefix}l_crypto"] += val
+                    st.session_state[f"{prefix}l_margin_used"] += entry_margin
+                    prev_notional = st.session_state[f"{prefix}l_avg_price"] * (st.session_state[f"{prefix}l_crypto"] - val)
+                    st.session_state[f"{prefix}l_avg_price"] = (prev_notional + val * current_price) / st.session_state[f"{prefix}l_crypto"]
+                    st.session_state[f"{prefix}l_status"][idx] = True
+                    st.session_state[f"{prefix}l_entry_prices"][idx] = current_price
+                    mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
+                    note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+                    msg = f"📈 *[{mode_tag}] {strategy_tag} LONG K{idx+1} SATIN ALINDI ({coin_title})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} BTC{note}"
+                    send_telegram_msg(msg)
+                    st.session_state[f"{base_prefix}log_history"].append(msg)
+                    save_state_to_db()
+                    break
+
+            # --- SHORT GİRİŞ (GERÇEK bant ayrışması beklenir) ---
+            for idx in range(3):
+                if not allow_new_entries:
+                    break
+                can_enter = (idx == 0 or s_status[idx-1]) and not s_status[idx]
+                band_ready = ust_ready[idx]
+                if current_price >= nw_ust[idx] and can_enter and band_ready:
+                    val = amounts[idx]
+                    order_result = place_futures_order(selected_symbol, "sell", val, is_live=is_live)
+                    entry_margin = (val * current_price) / BOT_LEVERAGE
+                    st.session_state[f"{base_prefix}balance_usd"] -= entry_margin
+                    st.session_state[f"{prefix}s_crypto"] += val
+                    st.session_state[f"{prefix}s_margin_used"] += entry_margin
+                    prev_notional = st.session_state[f"{prefix}s_avg_price"] * (st.session_state[f"{prefix}s_crypto"] - val)
+                    st.session_state[f"{prefix}s_avg_price"] = (prev_notional + val * current_price) / st.session_state[f"{prefix}s_crypto"]
+                    st.session_state[f"{prefix}s_status"][idx] = True
+                    st.session_state[f"{prefix}s_entry_prices"][idx] = current_price
+                    mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
+                    note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+                    msg = f"📈 *[{mode_tag}] {strategy_tag} SHORT K{idx+1} AÇILDI ({coin_title})*\nFiyat: {current_price:.2f}\nMiktar: {val:.6f} BTC{note}"
+                    send_telegram_msg(msg)
+                    st.session_state[f"{base_prefix}log_history"].append(msg)
+                    save_state_to_db()
+                    break
+        finally:
+            release_entry_lock()
 
     return {
         "nw_alt": nw_alt, "nw_ust": nw_ust,
@@ -698,34 +764,42 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
 
 def close_position_manual(strategy_label, prefix, direction, current_price, is_live):
     """LONG veya SHORT pozisyonu manuel olarak (kullanıcı butonu) kapatır."""
-    side_field = "l" if direction == "LONG" else "s"
-    avg = st.session_state[f"{prefix}{side_field}_avg_price"]
-    amt = st.session_state[f"{prefix}{side_field}_crypto"]
-    usd_spent = st.session_state[f"{prefix}{side_field}_usd_spent"]
-    if amt <= 0:
+    if not acquire_entry_lock():
+        st.warning("⏳ Şu anda otomatik bir işlem sürüyor, lütfen birkaç saniye sonra tekrar dene.")
         return
-    close_side = "sell" if direction == "LONG" else "buy"
-    order_result = place_futures_order(selected_symbol, close_side, amt, is_live=is_live, reduce_only=True)
-    if direction == "LONG":
-        pnl_usd = (current_price - avg) * amt
-        pnl_pct = ((current_price / avg) - 1) * 100 if avg > 0 else 0.0
-    else:
-        pnl_ratio = (avg - current_price) / avg if avg > 0 else 0.0
-        pnl_usd = usd_spent * pnl_ratio
-        pnl_pct = pnl_ratio * 100
-    margin_used = usd_spent / BOT_LEVERAGE
-    st.session_state[f"{base_prefix}balance_usd"] += margin_used + pnl_usd
-    mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
-    note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
-    strategy_emoji = "⚡"
-    msg = f"✋ *[{mode_tag}] {strategy_emoji} {strategy_label} {direction} MANUEL KAPATILDI ({coin_title})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){note}"
-    send_telegram_msg(msg)
-    st.session_state[f"{base_prefix}log_history"].append(msg)
-    record_trade(strategy_label, direction, "Manuel Kapatma", avg, current_price, amt, pnl_usd, pnl_pct, is_live)
-    st.session_state[f"{prefix}{side_field}_crypto"], st.session_state[f"{prefix}{side_field}_usd_spent"], st.session_state[f"{prefix}{side_field}_avg_price"] = 0.0, 0.0, 0.0
-    st.session_state[f"{prefix}{side_field}_status"] = [False, False, False]
-    st.session_state[f"{prefix}{side_field}_entry_prices"] = [0.0, 0.0, 0.0]
-    save_state_to_db()
+    try:
+        strategy_key = "scalp"
+        load_state(strategy_key, force_db_refresh=True)
+        side_field = "l" if direction == "LONG" else "s"
+        avg = st.session_state[f"{prefix}{side_field}_avg_price"]
+        amt = st.session_state[f"{prefix}{side_field}_crypto"]
+        margin_used_total = st.session_state[f"{prefix}{side_field}_margin_used"]
+        if amt <= 0:
+            return
+        close_side = "sell" if direction == "LONG" else "buy"
+        order_result = place_futures_order(selected_symbol, close_side, amt, is_live=is_live, reduce_only=True)
+        if direction == "LONG":
+            pnl_usd = (current_price - avg) * amt
+            pnl_pct = ((current_price / avg) - 1) * 100 if avg > 0 else 0.0
+        else:
+            pnl_ratio = (avg - current_price) / avg if avg > 0 else 0.0
+            notional = amt * avg
+            pnl_usd = notional * pnl_ratio
+            pnl_pct = pnl_ratio * 100
+        st.session_state[f"{base_prefix}balance_usd"] += margin_used_total + pnl_usd
+        mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
+        note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
+        strategy_emoji = "⚡"
+        msg = f"✋ *[{mode_tag}] {strategy_emoji} {strategy_label} {direction} MANUEL KAPATILDI ({coin_title})*\nMaliyet Ort.: {avg:.2f}\nKapanış: {current_price:.2f}\nMiktar: {amt:.6f} BTC\nK/Z: {pnl_usd:+.4f} USDT ({pnl_pct:+.2f}%){note}"
+        send_telegram_msg(msg)
+        st.session_state[f"{base_prefix}log_history"].append(msg)
+        record_trade(strategy_label, direction, "Manuel Kapatma", avg, current_price, amt, pnl_usd, pnl_pct, is_live)
+        st.session_state[f"{prefix}{side_field}_crypto"], st.session_state[f"{prefix}{side_field}_margin_used"], st.session_state[f"{prefix}{side_field}_avg_price"] = 0.0, 0.0, 0.0
+        st.session_state[f"{prefix}{side_field}_status"] = [False, False, False]
+        st.session_state[f"{prefix}{side_field}_entry_prices"] = [0.0, 0.0, 0.0]
+        save_state_to_db()
+    finally:
+        release_entry_lock()
 
 # ================= STATE YÜKLEME =================
 scalp_prefix = load_state("scalp")
@@ -735,7 +809,7 @@ is_admin = st.session_state.get("user_role") == "admin"
 st.sidebar.markdown("## 🐑 Kyoun")
 role_label = "👑 Yönetici" if is_admin else "👁️ İzleyici"
 st.sidebar.caption(f"BTC/USDT Futures · Giriş: {role_label}")
-st.sidebar.caption("🔖 build: v2026-06-23-scalp-only")
+st.sidebar.caption("🔖 build: v2026-06-23-balance-rebuild")
 if st.sidebar.button("🚪 Çıkış Yap", key="logout_button_global", use_container_width=True):
     st.session_state.password_correct = False
     st.session_state.user_role = None
@@ -786,13 +860,19 @@ if col_b1.button("🔔 Test", key="telegram_test_btn", use_container_width=True,
     send_telegram_msg("👋 *Bağlantı Testi:* Başarılı!")
     st.sidebar.success("Gönderildi!")
 if col_b2.button("🔴 Sıfırla", key="reset_all_btn", use_container_width=True, disabled=not is_admin):
-    for strategy_key in ("scalp",):
-        prefix = f"{base_prefix}{strategy_key}_"
-        for k, v in empty_position_state().items():
-            st.session_state[f"{prefix}{k}"] = v
-    st.session_state[f"{base_prefix}balance_usd"] = 100.0
-    save_state_to_db()
-    st.rerun()
+    if acquire_entry_lock():
+        try:
+            for strategy_key in ("scalp",):
+                prefix = f"{base_prefix}{strategy_key}_"
+                for k, v in empty_position_state().items():
+                    st.session_state[f"{prefix}{k}"] = v
+            st.session_state[f"{base_prefix}balance_usd"] = 100.0
+            save_state_to_db()
+        finally:
+            release_entry_lock()
+        st.rerun()
+    else:
+        st.sidebar.warning("⏳ Şu anda bir işlem sürüyor, birkaç saniye sonra tekrar dene.")
 
 st.sidebar.divider()
 btc_funding = get_btc_funding_rate()
@@ -1027,8 +1107,8 @@ def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_k
                         st.rerun(scope="fragment")
             if has_short:
                 pnl_ratio = (s_avg - current_price) / s_avg if s_avg > 0 else 0.0
-                s_usd_spent = st.session_state[f"{prefix}s_usd_spent"]
-                pnl_usd = s_usd_spent * pnl_ratio
+                s_notional = s_crypto * s_avg
+                pnl_usd = s_notional * pnl_ratio
                 pnl_pct = pnl_ratio * 100
                 with st.container(border=True):
                     st.markdown(f"**📉 SHORT** · {sum(s_status)}/3 kademe")
