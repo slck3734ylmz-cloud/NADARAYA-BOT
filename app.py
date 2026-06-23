@@ -1,5 +1,3 @@
---- START OF FILE Paste June 23, 2026 - 1:07PM ---
-
 import streamlit as st
 import ccxt
 import pandas as pd
