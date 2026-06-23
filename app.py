@@ -807,21 +807,77 @@ st.markdown(
     .kyoun-topbar { display:flex; gap:0; padding:0; margin-bottom:0.6rem; }
     div[data-testid="stMetric"] { background:#161B22; border:1px solid #2A2E37; border-radius:10px; padding:10px 14px; }
     div[data-testid="stMetricLabel"] { font-size:0.78rem; }
+    /* Sidebar ile ana içerik arası boşluğu sıkılaştır */
+    [data-testid="stMainBlockContainer"] { padding-top: 1.2rem !important; }
+    section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] { gap: 0.4rem; }
+    /* Kademe durumu kutularındaki uzun metinlerin taşmasını önle, satır aralığını düzelt */
+    div[data-testid="stVerticalBlockBorderWrapper"] p { line-height: 1.45 !important; }
+    /* Canlı nabız animasyonu */
+    @keyframes pulse-dot {
+        0%   { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7); }
+        70%  { box-shadow: 0 0 0 6px rgba(46, 204, 113, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); }
+    }
+    .live-pulse {
+        display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+        background: #2ecc71; animation: pulse-dot 1.8s infinite; margin-right: 6px;
+        vertical-align: middle;
+    }
+    .live-status-bar {
+        display: flex; align-items: center; justify-content: space-between;
+        background: #161B22; border: 1px solid #2A2E37; border-radius: 10px;
+        padding: 8px 16px; margin-bottom: 0.8rem; font-size: 0.85rem; color: #B7BDC6;
+    }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-trade_history_all = st.session_state.get(f"{base_prefix}trade_history", [])
-total_pnl_all = sum(t["pnl_usd"] for t in trade_history_all) if trade_history_all else 0.0
-balance_now = st.session_state.get(f"{base_prefix}balance_usd", 100.0)
+# Canlı durum çubuğu + üst metrikler - ayrı bir fragment olarak çalışır (1s),
+# böylece "Sistem Aktif" göstergesi ve saat gerçekten canlı kalır, sayfa tam
+# yenilenmeden de güncellenir. dca_fragment/scalp_fragment her başarılı tarama
+# sonunda kendi zaman damgasını (dca_last_success / scalp_last_success) yazar;
+# bu fragment o damgaları okuyup "kaç saniye önce güncellendi" bilgisini gösterir.
+@st.fragment(run_every="1s")
+def status_bar_fragment():
+    now_tr = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)
+    mode_text = "🔴 CANLI MOD" if live_trading_enabled else "📝 Kağıt Mod"
 
-top1, top2, top3, top4, top5 = st.columns(5)
-top1.metric("💳 Bakiye", f"${balance_now:,.2f}")
-top2.metric("📈 Toplam K/Z", f"${total_pnl_all:+,.4f}")
-top3.metric("📊 DCA Pozisyon", "Açık" if dca_has_position else "Yok")
-top4.metric("⚡ Scalp Pozisyon", "Açık" if scalp_has_position else "Yok")
-top5.metric("🎯 Aktif Mod", selected_mode)
+    dca_last = st.session_state.get("dca_last_success")
+    scalp_last = st.session_state.get("scalp_last_success")
+    now_epoch = time.time()
+    dca_age = f"{int(now_epoch - dca_last)}s önce" if dca_last else "bekleniyor..."
+    scalp_age = f"{int(now_epoch - scalp_last)}s önce" if scalp_last else "bekleniyor..."
+    # 25 saniyeden fazla güncelleme yoksa (2.5 tarama döngüsü kaçmışsa) uyarı rengi.
+    dca_stale = dca_last is None or (now_epoch - dca_last) > 25
+    scalp_stale = scalp_last is None or (now_epoch - scalp_last) > 25
+    dca_dot = "#e74c3c" if dca_stale else "#2ecc71"
+    scalp_dot = "#e74c3c" if scalp_stale else "#2ecc71"
+
+    st.markdown(
+        f"""
+        <div class="live-status-bar">
+            <div><span class="live-pulse"></span><b>Sistem Aktif</b> · Saat: <b>{now_tr.strftime('%H:%M:%S')}</b> (TR) · {mode_text}</div>
+            <div>📊 DCA: <span style="color:{dca_dot}">●</span> {dca_age} &nbsp;&nbsp; ⚡ Scalp: <span style="color:{scalp_dot}">●</span> {scalp_age}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    trade_history_all = st.session_state.get(f"{base_prefix}trade_history", [])
+    total_pnl_all = sum(t["pnl_usd"] for t in trade_history_all) if trade_history_all else 0.0
+    balance_now = st.session_state.get(f"{base_prefix}balance_usd", 100.0)
+    dca_pos = sum(st.session_state.get(f"{dca_prefix}l_status", [False]*3)) > 0 or sum(st.session_state.get(f"{dca_prefix}s_status", [False]*3)) > 0
+    scalp_pos = sum(st.session_state.get(f"{scalp_prefix}l_status", [False]*3)) > 0 or sum(st.session_state.get(f"{scalp_prefix}s_status", [False]*3)) > 0
+
+    top1, top2, top3, top4, top5 = st.columns(5)
+    top1.metric("💳 Bakiye", f"${balance_now:,.2f}")
+    top2.metric("📈 Toplam K/Z", f"${total_pnl_all:+,.4f}")
+    top3.metric("📊 DCA Pozisyon", "Açık" if dca_pos else "Yok")
+    top4.metric("⚡ Scalp Pozisyon", "Açık" if scalp_pos else "Yok")
+    top5.metric("🎯 Aktif Mod", selected_mode)
+
+status_bar_fragment()
 st.divider()
 
 # ================= ORTAK LİKİDASYON HARİTASI (açılan pencere/popover) =================
@@ -879,7 +935,9 @@ def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_k
                     st.success(f"✅ {labels[i]} — Alındı @ {st.session_state[f'{prefix}l_entry_prices'][i]:,.2f}")
                 elif not result["alt_ready"][i]:
                     needed = result["nw_alt"][i-1] - result["min_gaps_alt"][i]
-                    st.container(border=True).write(f"🔸 {labels[i]} — Bant: {result['nw_alt'][i]:,.2f} *({labels[i-1]}'den henüz yeterince ayrışmadı, en az {needed:,.2f} altına inmesi bekleniyor)*")
+                    with st.container(border=True):
+                        st.write(f"🔸 **{labels[i]}** — Bant: {result['nw_alt'][i]:,.2f}")
+                        st.caption(f"{labels[i-1]}'den henüz ayrışmadı · en az {needed:,.2f} altına inmeli")
                 else:
                     st.container(border=True).write(f"⏳ {labels[i]} — Bekliyor @ {result['nw_alt'][i]:,.2f}")
         with col_ks:
@@ -889,7 +947,9 @@ def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_k
                     st.success(f"✅ {labels[i]} — Açıldı @ {st.session_state[f'{prefix}s_entry_prices'][i]:,.2f}")
                 elif not result["ust_ready"][i]:
                     needed = result["nw_ust"][i-1] + result["min_gaps_ust"][i]
-                    st.container(border=True).write(f"🔸 {labels[i]} — Bant: {result['nw_ust'][i]:,.2f} *({labels[i-1]}'den henüz yeterince ayrışmadı, en az {needed:,.2f} üstüne çıkması bekleniyor)*")
+                    with st.container(border=True):
+                        st.write(f"🔸 **{labels[i]}** — Bant: {result['nw_ust'][i]:,.2f}")
+                        st.caption(f"{labels[i-1]}'den henüz ayrışmadı · en az {needed:,.2f} üstüne çıkmalı")
                 else:
                     st.container(border=True).write(f"⏳ {labels[i]} — Bekliyor @ {result['nw_ust'][i]:,.2f}")
 
@@ -994,6 +1054,7 @@ def dca_fragment():
 
         render_strategy_panel("DCA", dca_prefix, current_price, chart_dfs, ["1m", "5m", "15m", "1h", "4h", "1d"], labels, result, live_trading_enabled, "dca")
         render_liquidity_popover(is_volatile, "dca")
+        st.session_state["dca_last_success"] = time.time()
 
     except Exception as e:
         st.error(f"DCA hatası, 10s sonra tekrar denenecek: {type(e).__name__}: {str(e)[:200]}")
@@ -1033,6 +1094,7 @@ def scalp_fragment():
 
         render_strategy_panel("SCALP", scalp_prefix, current_price, chart_dfs, ["1m", "5m", "15m"], labels, result, live_trading_enabled, "scalp")
         render_liquidity_popover(False, "scalp")  # Scalp her zaman kısa vadeli - sabit 3 günlük pencere
+        st.session_state["scalp_last_success"] = time.time()
 
     except Exception as e:
         st.error(f"Scalp hatası, 10s sonra tekrar denenecek: {type(e).__name__}: {str(e)[:200]}")
