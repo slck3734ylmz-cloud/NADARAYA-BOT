@@ -708,7 +708,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
                     notional = amt * avg
                     pnl_usd = notional * pnl_ratio
                     pnl_pct = pnl_ratio * 100
-                    st.session_state[f"{base_prefix}balance_usd"] += margin_used_total + pnl_usd
+                    adjust_balance_atomic(margin_used_total + pnl_usd)
                     mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
                     note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
                     emoji = "🔴" if exit_reason == "Stop-Loss" else "🟢"
@@ -732,7 +732,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
                     val = amounts[idx]
                     order_result = place_futures_order(selected_symbol, "buy", val, is_live=is_live)
                     entry_margin = (val * current_price) / BOT_LEVERAGE
-                    st.session_state[f"{base_prefix}balance_usd"] -= entry_margin
+                    adjust_balance_atomic(-entry_margin)
                     st.session_state[f"{prefix}l_crypto"] += val
                     st.session_state[f"{prefix}l_margin_used"] += entry_margin
                     prev_notional = st.session_state[f"{prefix}l_avg_price"] * (st.session_state[f"{prefix}l_crypto"] - val)
@@ -757,7 +757,7 @@ def run_staged_strategy(strategy_key, strategy_label, prefix, current_price, dfs
                     val = amounts[idx]
                     order_result = place_futures_order(selected_symbol, "sell", val, is_live=is_live)
                     entry_margin = (val * current_price) / BOT_LEVERAGE
-                    st.session_state[f"{base_prefix}balance_usd"] -= entry_margin
+                    adjust_balance_atomic(-entry_margin)
                     st.session_state[f"{prefix}s_crypto"] += val
                     st.session_state[f"{prefix}s_margin_used"] += entry_margin
                     prev_notional = st.session_state[f"{prefix}s_avg_price"] * (st.session_state[f"{prefix}s_crypto"] - val)
@@ -804,7 +804,7 @@ def close_position_manual(strategy_label, prefix, direction, current_price, is_l
             notional = amt * avg
             pnl_usd = notional * pnl_ratio
             pnl_pct = pnl_ratio * 100
-        st.session_state[f"{base_prefix}balance_usd"] += margin_used_total + pnl_usd
+        adjust_balance_atomic(margin_used_total + pnl_usd)
         mode_tag = "🔴 CANLI" if is_live else "📝 KAĞIT"
         note = "" if order_result.get("status") in ("simulated", "success") else f"\n⚠️ Emir hatası: {order_result.get('error','')}"
         strategy_emoji = "⚡"
