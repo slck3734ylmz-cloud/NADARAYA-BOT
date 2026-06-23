@@ -806,14 +806,19 @@ col_b1, col_b2 = st.sidebar.columns(2)
 if col_b1.button("🔔 Test", key="telegram_test_btn", use_container_width=True, disabled=not is_admin):
     send_telegram_msg("👋 *Bağlantı Testi:* Başarılı!")
     st.sidebar.success("Gönderildi!")
-if col_b2.button("🔴 Sıfırla", key="reset_all_btn", use_container_width=True, disabled=not is_admin):
+if col_b2.button("🔴 Tam Sıfırla", key="reset_all_btn", use_container_width=True, disabled=not is_admin,
+                  help="Bakiye, pozisyonlar VE işlem geçmişi dahil her şeyi $100 ile sıfırdan başlatır."):
     for strategy_key in ("dca", "scalp"):
         prefix = f"{base_prefix}{strategy_key}_"
         for k, v in empty_position_state().items():
             st.session_state[f"{prefix}{k}"] = v
+        st.session_state[f"{prefix}locked_prices"] = None
     st.session_state[f"{base_prefix}balance_usd"] = 100.0
     st.session_state[f"{base_prefix}locked_prices"] = None
+    st.session_state[f"{base_prefix}trade_history"] = []
+    st.session_state[f"{base_prefix}log_history"] = []
     save_state_to_db()
+    st.sidebar.success("✅ Her şey sıfırlandı: Bakiye $100, pozisyonlar ve geçmiş temizlendi.")
     st.rerun()
 
 st.sidebar.divider()
@@ -917,6 +922,29 @@ def status_bar_fragment():
 
 status_bar_fragment()
 st.divider()
+
+# ================= ORTAK ANLIK FİYAT KAYNAĞI =================
+# DCA ve Scalp fragment'leri ÖNCEDEN kendi fetch_ticker çağrısını ayrı ayrı
+# yapıyordu - her biri kendi 10s döngüsünde farklı bir anda çektiği için,
+# sekmeler arasında geçince "Anlık Fiyat" hafifçe farklı görünüyordu (ikisi de
+# doğruydu, sadece farklı milisaniyelerde alınmış ticker'lardı). Çözüm: TEK bir
+# fragment fiyatı sık aralıkla çekip session_state'e yazsın, DCA ve Scalp ondan
+# OKUSUN - böylece her iki panel her zaman birbiriyle aynı anlık fiyatı gösterir.
+@st.fragment(run_every="3s")
+def price_ticker_fragment():
+    try:
+        live_ticker = fetch_with_retry(lambda: exchange.fetch_ticker(selected_symbol))
+        price_now = live_ticker.get('last') or live_ticker.get('close') or 0.0
+        if price_now > 0:
+            st.session_state[f"{base_prefix}live_price"] = price_now
+            st.session_state[f"{base_prefix}live_price_change_24h"] = live_ticker.get('percentage') or 0.0
+            st.session_state[f"{base_prefix}price_last_success"] = time.time()
+    except Exception:
+        # Geçici bir hata olursa session_state'teki ESKİ fiyat korunur (panelin
+        # çökmesi yerine bir önceki bilinen fiyatla devam etmesi daha güvenli).
+        pass
+
+price_ticker_fragment()
 
 # ================= ORTAK LİKİDASYON HARİTASI (açılan pencere/popover) =================
 # Ana ekranı sade tutmak için ayrı bir popover'da gösterilir, hem DCA hem Scalp
@@ -1042,9 +1070,14 @@ def render_strategy_panel(strategy_label, prefix, current_price, chart_dfs, tf_k
 @st.fragment(run_every="10s")
 def dca_fragment():
     try:
-        live_ticker = fetch_with_retry(lambda: exchange.fetch_ticker(selected_symbol))
-        current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
-        price_change_24h = live_ticker.get('percentage') or 0.0
+        # Fiyat artık burada AYRICA çekilmiyor - DCA ve Scalp'in her zaman aynı
+        # anlık fiyatı göstermesi için price_ticker_fragment'in yazdığı ortak
+        # değer okunuyor (bkz. yukarıdaki "ORTAK ANLIK FİYAT KAYNAĞI" bölümü).
+        current_price = st.session_state.get(f"{base_prefix}live_price", 0.0)
+        price_change_24h = st.session_state.get(f"{base_prefix}live_price_change_24h", 0.0)
+        if current_price <= 0:
+            st.info("⏳ Fiyat verisi bekleniyor...")
+            return
 
         df_1m = fetch_tf_data(selected_symbol, "1m")
         df_5m = fetch_tf_data(selected_symbol, "5m")
@@ -1120,9 +1153,12 @@ def dca_fragment():
 @st.fragment(run_every="10s")
 def scalp_fragment():
     try:
-        live_ticker = fetch_with_retry(lambda: exchange.fetch_ticker(selected_symbol))
-        current_price = live_ticker.get('last') or live_ticker.get('close') or 0.0
-        price_change_24h = live_ticker.get('percentage') or 0.0
+        # DCA ile birebir aynı paylaşılan fiyat - sekmeler arası tutarsızlık önlenir.
+        current_price = st.session_state.get(f"{base_prefix}live_price", 0.0)
+        price_change_24h = st.session_state.get(f"{base_prefix}live_price_change_24h", 0.0)
+        if current_price <= 0:
+            st.info("⏳ Fiyat verisi bekleniyor...")
+            return
 
         df_1m = fetch_tf_data(selected_symbol, "1m")
         df_5m = fetch_tf_data(selected_symbol, "5m")
